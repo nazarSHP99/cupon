@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="800" viewBox="0 0 1400 800">
+  <rect width="1400" height="800" rx="30" fill="#eed58d"/>
+  <rect x="30" y="30" width="1340" height="740" rx="18" fill="none" stroke="#7b4c30" stroke-opacity=".45" stroke-width="2"/>
+  <path d="M1060 32v736" stroke="#7b4c30" stroke-opacity=".6" stroke-width="2" stroke-dasharray="10 12"/>
+  <g fill="#7b4c30" font-family="Arial,Helvetica,sans-serif">
+    <text x="85" y="125" font-size="32" letter-spacing="6">CUPON®</text>
+    <text x="80" y="330" font-size="135" font-weight="700" letter-spacing="-7">A HAPPY</text>
+    <text x="80" y="470" font-size="135" font-weight="700" letter-spacing="-7">MOMENT.</text>
+    <text x="86" y="680" font-size="30" letter-spacing="5">ONE SMALL REASON TO SMILE.</text>
+    <text x="1210" y="410" font-size="29" text-anchor="middle" transform="rotate(-90 1210 410)" letter-spacing="7">THIS ONE IS YOURS</text>
+    <text x="1115" y="710" font-size="22" font-family="monospace">NO. 0003</text>
+  </g>
+  <g stroke="#7b4c30" stroke-width="5" fill="none" transform="translate(930 135)"><circle r="29"/><path d="M0-64v17M0 47v17M-64 0h17M47 0h17M-45-45l12 12M33 33l12 12M-45 45l12-12M33-33l12-12"/></g>
+</svg>

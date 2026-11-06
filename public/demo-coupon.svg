@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="800" viewBox="0 0 1400 800">
+  <rect width="1400" height="800" rx="32" fill="#eb5936"/>
+  <rect x="32" y="32" width="1336" height="736" rx="20" fill="none" stroke="#fff2d1" stroke-opacity=".65" stroke-width="2"/>
+  <path d="M1060 34v732" stroke="#fff2d1" stroke-width="2" stroke-dasharray="9 12"/>
+  <g fill="#fff2d1" font-family="Arial,Helvetica,sans-serif">
+    <text x="86" y="125" font-size="32" letter-spacing="6">CUPON®</text>
+    <text x="80" y="330" font-size="137" font-weight="700" letter-spacing="-7">A LITTLE</text>
+    <text x="80" y="465" font-size="137" font-weight="700" letter-spacing="-7">SOMETHING.</text>
+    <text x="87" y="675" font-size="30" letter-spacing="4">JUST FOR YOU. ENJOY THE MOMENT.</text>
+    <text x="1210" y="405" font-size="28" text-anchor="middle" transform="rotate(-90 1210 405)" letter-spacing="8">GOOD THINGS AHEAD</text>
+    <text x="1115" y="710" font-family="monospace" font-size="22">NO. 0001</text>
+  </g>
+  <g fill="#fff2d1" transform="translate(925 125)"><path d="M0-55 12-20 42-42 20-12 55 0 20 12 42 42 12 20 0 55-12 20-42 42-20 12-55 0-20-12-42-42-12-20Z"/></g>
+  <g fill="#fff2d1"><rect x="1115" y="80" width="6" height="130"/><rect x="1128" y="80" width="12" height="130"/><rect x="1147" y="80" width="4" height="130"/><rect x="1158" y="80" width="9" height="130"/><rect x="1176" y="80" width="5" height="130"/><rect x="1188" y="80" width="14" height="130"/><rect x="1210" y="80" width="4" height="130"/><rect x="1221" y="80" width="8" height="130"/><rect x="1238" y="80" width="14" height="130"/><rect x="1260" y="80" width="5" height="130"/><rect x="1273" y="80" width="10" height="130"/></g>
+</svg>

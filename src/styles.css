@@ -1,0 +1,147 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+
+:root {
+  font-family: 'Manrope', Arial, sans-serif;
+  color: #2d392f;
+  background: #f2f0e8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-weight: 500;
+  font-size: 16px;
+  --ink: #2d392f;
+  --orange: #e85a37;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+body { margin: 0; }
+button { font: inherit; font-size: 14px; color: inherit; cursor: pointer; border: 0; -webkit-tap-highlight-color: transparent; }
+button:disabled { cursor: default; opacity: .55; }
+button:focus-visible { outline: 3px solid #df6a47; outline-offset: 5px; }
+button { transition: background .2s, transform .2s, border-color .2s, opacity .2s; }
+button svg { flex-shrink: 0; }
+
+.app-shell { height: 100svh; width: 100%; position: relative; overflow: hidden; }
+.tabletop { position: absolute; inset: 0; }
+.scene, .canvas-host { position: absolute; inset: 0; width: 100%; height: 100%; }
+.scene canvas { display: block; touch-action: none; user-select: none; }
+.scene--ready { cursor: grab; }
+.scene--dragging { cursor: grabbing; }
+.scene-loading { height: 100%; display: flex; align-items: center; justify-content: center; color: #8a967b; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+.icon-button { display: inline-flex; align-items: center; justify-content: center; background: transparent; width: 42px; height: 42px; border-radius: 50%; color: #68735f; }
+.icon-button:hover { background: #e5e8db; }
+.sound-button { position: absolute; z-index: 3; right: clamp(20px, 3vw, 48px); top: clamp(18px, 3vh, 36px); border: 1px solid #d5dbc955; background: #f9f8ef9c; backdrop-filter: blur(10px); }
+
+.controls { position: absolute; z-index: 2; right: 32px; bottom: 24px; width: 310px; filter: drop-shadow(0 8px 15px #4c593816); transition: bottom .3s ease; }
+.file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.upload-area {
+  position: relative;
+  border-radius: 6px;
+  background: #faf5e5;
+  box-shadow: inset 0 0 0 1px #d8d8c2;
+  mask-image: radial-gradient(circle at 0 50%, transparent 8px, #000 8.6px), radial-gradient(circle at 100% 50%, transparent 8px, #000 8.6px);
+  mask-size: 51% 100%;
+  mask-position: left, right;
+  mask-repeat: no-repeat;
+  transition: background .2s, transform .2s;
+}
+.upload-area:hover { background: #fff9e7; transform: translateY(-2px) rotate(-.5deg); }
+.upload-area--hover { background: #e2ead2; transform: translateY(-3px); }
+.upload-area--selected { background: #f3f3df; }
+.upload-button { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) 34px; align-items: center; text-align: left; gap: 12px; width: 100%; padding: 16px; background: transparent; border-radius: 6px; min-height: 94px; }
+.upload-button::after { content: ''; position: absolute; right: 56px; top: 12px; bottom: 12px; border-left: 1px dashed #a6b08d; pointer-events: none; }
+.upload-button:focus-visible { outline-offset: -5px; }
+.upload-icon { height: 40px; width: 40px; flex-shrink: 0; display: grid; place-items: center; color: #7c8b65; }
+.upload-icon img { width: 39px; height: 34px; object-fit: contain; transform: rotate(-8deg); filter: drop-shadow(1px 3px 2px #0002); }
+.upload-text { display: flex; flex-direction: column; gap: 7px; overflow: hidden; min-width: 0; }
+.upload-text strong { font-size: 15px; line-height: 1.3; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.upload-text > span { font-size: 14px; line-height: 1.3; color: #7b866c; }
+.upload-stub { display: flex; align-items: center; justify-content: flex-end; color: #6a7b53; }
+.demo-button { background: transparent; padding: 12px 8px 2px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; color: #61724e; width: 100%; }
+.demo-button:hover { color: #c55533; transform: translateX(2px); }
+.error { position: absolute; bottom: calc(100% + 12px); right: 0; width: 100%; font-size: 14px; line-height: 1.5; color: #a34129; margin: 0; background: #fcf6e9; padding: 10px 13px; border: 1px solid #e9d9c4; border-radius: 9px; }
+
+.steps-bar { position: absolute; z-index: 2; bottom: max(24px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); }
+.steps { display: flex; gap: 16px; align-items: center; list-style: none; margin: 0; padding: 11px 18px; color: #7d856f; border-radius: 40px; background: #f9f7edaa; backdrop-filter: blur(12px); white-space: nowrap; box-shadow: 0 2px 12px #4b573a06; }
+.steps li { display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 22px; }
+.steps li:not(:last-child)::after { content: ''; width: 22px; height: 1px; background: #a7b29370; margin-left: 8px; }
+.steps li > span { font-family: monospace; font-size: 14px; font-weight: 500; padding: 3px; }
+.steps .step-active { color: #536e40; font-weight: 700; }
+.steps .step-active > span { background: #dce5cd; border-radius: 5px; }
+.steps .step-complete { color: #76876a; }
+.action-dock { position: absolute; bottom: calc(100% + 13px); left: 50%; transform: translate(-50%, 15px); opacity: 0; pointer-events: none; transition: opacity .25s, transform .3s cubic-bezier(.2, .7, .2, 1); }
+.action-dock--visible { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.insert-button, .save-button { min-height: 50px; padding: 0 20px; border-radius: 12px; font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 14px; white-space: nowrap; }
+.insert-button { width: 280px; justify-content: space-between; background: var(--orange); color: #fff8e9; box-shadow: 0 3px 0 #c54d2e, 0 8px 20px #b85e3524; animation: dock-rise .32s cubic-bezier(.2, .7, .2, 1) both; }
+.insert-button:hover:not(:disabled) { background: #d94f2c; transform: translateY(-2px); }
+.insert-button:active:not(:disabled) { transform: translateY(1px); box-shadow: 0 1px 0 #c54d2e; }
+.receipt-actions { display: flex; gap: 9px; align-items: center; animation: dock-rise .3s ease-out both; }
+.save-button { background: #526949; color: #fffbed; box-shadow: 0 3px 0 #3f5537, 0 8px 20px #46573a1a; }
+.save-button:hover:not(:disabled) { background: #435c3a; transform: translateY(-1px); }
+.file-format { font-size: 14px; font-weight: 500; opacity: .75; padding-left: 10px; border-left: 1px solid #ebf0dc4d; }
+.again-button { width: 50px; height: 50px; border: 1px solid #d0d8be; background: #f7f6e9; border-radius: 12px; box-shadow: 0 3px 0 #d5dac8; }
+.again-button:hover { background: #ecf0df; }
+.save-error { position: absolute; left: 50%; transform: translateX(-50%); width: 300px; bottom: calc(100% + 8px); border-radius: 9px; background: #fcf6e9; color: #a34129; font-size: 14px; line-height: 1.5; padding: 10px 12px; margin: 0; }
+.button-spinner { width: 18px; height: 18px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; flex-shrink: 0; }
+
+.scene-fallback { height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; padding-left: 30%; padding-bottom: 10%; }
+.scene-fallback > p { font-size: 14px; line-height: 1.7; color: #7c8770; text-align: center; }
+.fallback-machine { background: #edead6; border: 1px solid #cfd1bd; border-radius: 24px; box-shadow: 12px 12px #bcc4a9, 20px 32px 30px #58603b20; width: 230px; height: 315px; padding: 25px; transform: rotate(-3deg); }
+.fallback-machine > span { display: block; color: #7c886d; font-weight: 800; text-align: center; font-size: 18px; }
+.fallback-machine > div { background: #2d4035; color: #f2f0d8; font-size: 25px; font-weight: 700; padding: 17px; border-radius: 7px; margin: 15px 0; }
+.fallback-machine i { height: 10px; background: #24372a; display: block; border: 12px solid var(--orange); box-sizing: content-box; border-radius: 5px; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes dock-rise { from { opacity: 0; translate: 0 18px; } to { opacity: 1; translate: 0 0; } }
+
+@media (max-width: 1100px) {
+  .controls { right: 24px; bottom: 154px; width: 300px; }
+}
+@media (max-width: 759px) and (orientation: portrait) {
+  .controls { width: min(300px, calc(100vw - 32px)); right: 16px; bottom: 78px; }
+  .app-shell:not(.phase-empty) .controls { bottom: 142px; }
+  .sound-button { top: max(16px, env(safe-area-inset-top)); right: 18px; width: 40px; height: 40px; }
+  .steps-bar { bottom: max(16px, env(safe-area-inset-bottom)); }
+  .steps { gap: 10px; padding: 9px 14px; }
+  .steps li { gap: 6px; }
+  .steps li:not(:last-child)::after { width: 14px; margin-left: 4px; }
+  .upload-button { min-height: 84px; padding: 12px 16px; }
+  .upload-text strong { font-size: 15px; }
+  .demo-button { padding-top: 10px; }
+  .insert-button { width: 268px; }
+  .insert-button, .save-button { min-height: 47px; font-size: 14px; padding: 0 16px; gap: 10px; }
+  .again-button { width: 47px; height: 47px; }
+  .scene-fallback { padding-left: 0; padding-bottom: 210px; }
+  .fallback-machine { width: 185px; height: 255px; padding: 19px; }
+  .fallback-machine > div { font-size: 20px; padding: 15px; }
+}
+@media (max-width: 480px) {
+  .steps li > span { display: none; }
+  .steps { padding: 11px 17px; gap: 12px; }
+  .steps li:not(:last-child)::after { width: 16px; margin-left: 6px; }
+}
+@media (max-height: 540px) {
+  .controls { width: 270px; right: 16px; bottom: 110px; }
+  .upload-button { min-height: 78px; padding: 10px 14px; grid-template-columns: 32px minmax(0, 1fr) 28px; gap: 10px; }
+  .upload-button::after { right: 49px; }
+  .upload-icon { width: 32px; height: 32px; }
+  .upload-text strong { font-size: 14px; }
+  .demo-button { padding-top: 8px; }
+  .steps-bar { bottom: 12px; }
+  .steps { padding: 6px 14px; gap: 12px; }
+  .steps li:not(:last-child)::after { width: 18px; }
+  .action-dock { bottom: calc(100% + 10px); }
+  .insert-button, .save-button { min-height: 42px; }
+  .again-button { height: 42px; width: 42px; }
+}
+@media (max-width: 480px) and (max-height: 640px) {
+  .app-shell:not(.phase-empty) .controls { bottom: 130px; }
+  .upload-button { min-height: 78px; padding-block: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
