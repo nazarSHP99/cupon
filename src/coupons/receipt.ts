@@ -12,6 +12,7 @@ export interface Receipt {
 }
 
 export function couponTitle(coupon: Coupon) {
+  if (coupon.title) return coupon.title
   const demoTitles: Record<string, string> = {
     '/demo-coupon.svg': 'Маленька приємність',
     '/demo-good-things.svg': 'Щось хороше попереду',

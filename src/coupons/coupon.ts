@@ -1,22 +1,18 @@
+import { BASE_COUPONS } from './catalog'
+
 export interface Coupon {
   src: string
   name: string
   aspect: number
   demo: boolean
+  id?: string
+  title?: string
+  description?: string
+  category?: string
 }
 
-export const DEMO_COUPON: Coupon = {
-  src: '/demo-coupon.svg',
-  name: 'a-little-something.svg',
-  aspect: 1.75,
-  demo: true,
-}
-
-export const DEMO_COUPONS: Coupon[] = [
-  DEMO_COUPON,
-  { src: '/demo-good-things.svg', name: 'good-things-ahead.svg', aspect: 1.75, demo: true },
-  { src: '/demo-happy-moment.svg', name: 'a-happy-moment.svg', aspect: 1.75, demo: true },
-]
+export const DEMO_COUPONS: Coupon[] = BASE_COUPONS
+export const DEMO_COUPON = DEMO_COUPONS[0]
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 

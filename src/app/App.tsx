@@ -4,6 +4,11 @@ import { createReceipt, downloadReceipt, FEED_DURATION, PRINT_DURATION, type Rec
 import { Icon } from '../components/Icons'
 import { useReducedMotion } from '../hooks/useReducedMotion'
 import { useSound } from '../hooks/useSound'
+import { useCouponHistory } from '../hooks/useCouponHistory'
+import { CouponBrowser } from '../components/CouponBrowser'
+import { JourneyNav } from '../components/JourneyNav'
+import { CustomCursor } from '../components/CustomCursor'
+import '../components/experience.css'
 import type { DragHint, Phase } from '../scene/MachineScene'
 
 const MachineScene = lazy(() => import('../scene/MachineScene'))
@@ -49,6 +54,10 @@ export default function App() {
   const [booted, setBooted] = useState(false)
   const [fallback, setFallback] = useState(false)
   const [near, setNear] = useState(false)
+  const [journeyProgress, setJourneyProgress] = useState(0)
+  const [browserOpen, setBrowserOpen] = useState(false)
+  const [activeCoupon, setActiveCoupon] = useState(0)
+  const { entries, saveUsage, storageError } = useCouponHistory()
   const scrollRoot = useRef<HTMLDivElement>(null)
   const keypad = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -61,7 +70,7 @@ export default function App() {
   const hoverCoupon = useCallback(() => play('paper'), [play])
   const busy = phase === 'inserting' || phase === 'printing'
   const locked = busy || loading || saving
-  const controlsActive = booted && (near || fallback)
+  const controlsActive = booted && (near || fallback) && !browserOpen && journeyProgress < .67
 
   const sceneReady = useCallback((webglUnavailable = false) => {
     setFallback(webglUnavailable)
@@ -71,6 +80,9 @@ export default function App() {
   useEffect(() => { phaseRef.current = phase }, [phase])
   useEffect(() => { playRef.current = play }, [play])
   useEffect(() => () => { request.current++ }, [])
+  useEffect(() => {
+    if (phase === 'success' && coupon && receipt) void saveUsage(coupon, receipt)
+  }, [phase, coupon, receipt, saveUsage])
 
   useEffect(() => {
     if (phase !== 'inserting' || !coupon) return
@@ -136,6 +148,8 @@ export default function App() {
   function demo(index = 0) {
     if (busy || loading || saving) return
     request.current++
+    setBrowserOpen(false)
+    setActiveCoupon(index)
     setCoupon(DEMO_COUPONS[index] ?? DEMO_COUPONS[0])
     setReceipt(null)
     setSaveError('')
@@ -189,9 +203,24 @@ export default function App() {
     : dragHint === 'dragging' ? 'Піднеси купон до помаранчевої щілини'
     : coupon ? 'Усе готово. Можна вставляти.' : 'Автомат готовий до приємного'
 
-  function approach() {
+  function navigate(checkpoint: 0 | 1 | 2) {
+    if (locked || browserOpen) return
     const root = scrollRoot.current
-    root?.scrollTo({ top: root.scrollHeight, behavior: reducedMotion ? 'instant' : 'smooth' })
+    if (fallback) {
+      setJourneyProgress(checkpoint / 2)
+      return
+    }
+    root?.scrollTo({ top: (root.scrollHeight - root.clientHeight) * checkpoint / 2, behavior: reducedMotion ? 'instant' : 'smooth' })
+  }
+
+  function openLibrary() {
+    if (locked) return
+    setActiveCoupon(0)
+    setBrowserOpen(true)
+  }
+
+  function closeLibrary() {
+    setBrowserOpen(false)
   }
 
   function toggleSound() {
@@ -199,15 +228,17 @@ export default function App() {
     setSound(!sound)
   }
 
-  function nextDemo() {
-    const current = DEMO_COUPONS.findIndex(item => item.src === coupon?.src)
-    demo((current + 1) % DEMO_COUPONS.length)
-  }
-
   return <>
     <div ref={scrollRoot} className={`app-shell phase-${phase}`} data-near={near} data-fallback={fallback}
+      data-checkpoint={journeyProgress > .78 ? 'drawer' : journeyProgress > .4 ? 'table' : 'overview'}
+      style={{ overflowY: browserOpen || locked ? 'hidden' : 'auto' }}
+      onScroll={event => {
+        const root = event.currentTarget
+        setJourneyProgress(root.scrollTop / Math.max(1, root.scrollHeight - root.clientHeight))
+      }}
       tabIndex={0} aria-label="Купон на пагорбі" inert={!booted}>
       <main className="tabletop" aria-label="Купоноприймач і принтер чеків на дерев’яному столі"
+        onClick={fallback && browserOpen ? closeLibrary : undefined}
         onDragOver={event => {
           if (!event.dataTransfer.types.includes('Files')) return
           event.preventDefault()
@@ -222,6 +253,8 @@ export default function App() {
           <Suspense fallback={null}>
             <MachineScene coupon={coupon} receipt={receipt} phase={phase} reducedMotion={reducedMotion}
               onInsert={insert} onDragHint={setDragHint} dragHint={dragHint} onChooseDemo={demo} onHoverCoupon={hoverCoupon} disabled={locked}
+              browserOpen={browserOpen} activeCoupon={activeCoupon} onBrowse={openLibrary} onCloseBrowse={closeLibrary}
+              onPreviewCoupon={setActiveCoupon} usedCoupons={entries}
               scrollRoot={scrollRoot} keypad={keypad} onReady={sceneReady} onApproach={setNear} />
           </Suspense>
         </div>
@@ -237,7 +270,7 @@ export default function App() {
             onClick={() => fileInput.current?.click()} disabled={locked} aria-label="Обрати свій купон (PNG або SVG)" title="Обери свій PNG або SVG">
             <Icon name="upload" size={35} /><span>{loading ? '…' : 'File'}</span>
           </button>
-          <button className="key key--demo" onClick={nextDemo} disabled={locked} aria-label="Спробувати демо-купон" title="Спробуй демо-купон">
+          <button className="key key--demo" onClick={openLibrary} disabled={locked} aria-label="Обрати готовий купон" title="Колекція готових купонів">
             <Icon name="ticket" size={35} /><span>Demo</span>
           </button>
           <button className={`key key--insert ${phase === 'ready' ? 'key--lit' : ''}`}
@@ -258,15 +291,29 @@ export default function App() {
           </button>
         </div>
 
-        {!fallback && <button className="approach-cue" onClick={approach} tabIndex={near ? -1 : 0} aria-hidden={near} aria-label="Наблизитися до столу">
+        {!fallback && journeyProgress < .43 && <button className="approach-cue" onClick={() => navigate(1)} aria-label="Наблизитися до столу">
           <span>Прокрути, щоб наблизитися</span><Icon name="down" size={17} />
         </button>}
-        {(error || saveError) && <p className="scene-error" role="alert">{error || saveError}</p>}
+        {journeyProgress > .8 && <aside className="drawer-history" aria-label="Історія використаних купонів">
+          <h2>Використані купони <span>{entries.length}</span></h2>
+          {entries.length === 0 ? <p>Тут з’являться купони, які ти активуєш за цим столом.</p> :
+            <details><summary>Переглянути використані купони</summary>
+              <ol>{entries.map(entry => <li key={entry.id}>
+                <img src={entry.src} alt="" /><div><strong>{entry.title}</strong>
+                  <time dateTime={entry.usedAt}>{new Date(entry.usedAt).toLocaleDateString('uk-UA')}</time></div>
+              </li>)}</ol>
+            </details>}
+          <p className="drawer-storage">Збережено в цьому браузері на цьому пристрої.</p>
+        </aside>}
+        {(error || saveError || storageError) && <p className="scene-error" role="alert">{error || saveError || storageError}</p>}
         <p className="sr-only" role="status" aria-live="polite">{statusText}</p>
       </main>
       {!fallback && <div className="scroll-runway" aria-hidden="true" />}
     </div>
-
+    <JourneyNav progress={journeyProgress} onNavigate={navigate} disabled={locked || browserOpen || !booted} />
+    {fallback && browserOpen && <img className="fallback-catalog-preview" src={DEMO_COUPONS[activeCoupon].src} alt={DEMO_COUPONS[activeCoupon].title} />}
+    <CouponBrowser open={browserOpen} activeIndex={activeCoupon} onActiveIndex={setActiveCoupon} onChoose={demo} onClose={closeLibrary} />
+    <CustomCursor />
     <BootMachine ready={booted} />
   </>
 }

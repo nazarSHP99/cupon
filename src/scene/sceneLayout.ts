@@ -1,16 +1,12 @@
 import * as THREE from 'three'
+import { COUPON_BOX_DEPTH, COUPON_BOX_WIDTH, COUPON_PREVIEW_X } from './terminal/CouponBox'
+import { DRAWER_WIDTH, DRAWER_X } from './terminal/UsedCouponDrawer'
 
 const FOV = 39
 const up = new THREE.Vector3(0, 1, 0)
 
 export const TABLE_WIDTH = 11.6
 export const TABLE_DEPTH = 7
-export const DEMO_WIDTH = 1.74
-export const DEMO_LAYOUT = [
-  { index: 1, x: -.68, z: -1.14, angle: .09 },
-  { index: 2, x: .58, z: .14, angle: -.12 },
-  { index: 0, x: -.54, z: 1.42, angle: .08 },
-]
 
 export function getSceneLayout(width: number, height: number) {
   const portrait = width < 760 && height > width * 0.8
@@ -18,7 +14,7 @@ export function getSceneLayout(width: number, height: number) {
   const machineX = portrait ? 0.81 : 2.18
   const stackPosition = new THREE.Vector3(portrait ? -1.66 : -3.40, -2.225, 1.32)
   const stackScale = portrait ? 0.69 : 1
-  const printerPosition = new THREE.Vector3(portrait ? -2.06 : -3.65, -2.24, -1.49)
+  const printerPosition = new THREE.Vector3(portrait ? -2.28 : -.86, -2.24, portrait ? -2.58 : -1.31)
   const printerScale = portrait ? 0.66 : 1
   const keypadScale = portrait ? 1 : 0.83
   const keypadPosition = new THREE.Vector3(portrait ? 0.84 : -0.29, -2.24 + 0.47 * keypadScale, 2.43)
@@ -37,20 +33,28 @@ export function getSceneLayout(width: number, height: number) {
     }
   }
   fit([machineX - 1.67, -2.24, -0.66], [machineX + 1.67, 2.28, 2.09])
-  for (const { x, z } of DEMO_LAYOUT) {
-    const px = stackPosition.x + x * stackScale
-    const pz = stackPosition.z + z * stackScale
-    fit([px - .96 * stackScale, -2.25, pz - .63 * stackScale], [px + .96 * stackScale, -2.05, pz + .63 * stackScale])
-  }
+  const stackHalfWidth = COUPON_BOX_WIDTH * stackScale / 2
+  const stackHalfDepth = COUPON_BOX_DEPTH * stackScale / 2
+  fit([stackPosition.x - stackHalfWidth, -2.25, stackPosition.z - stackHalfDepth],
+    [stackPosition.x + stackHalfWidth, stackPosition.y + 1.5 * stackScale, stackPosition.z + stackHalfDepth])
   fit(
     [printerPosition.x - 1.16 * printerScale, -2.24, printerPosition.z - .83 * printerScale],
     [printerPosition.x + 1.16 * printerScale, -2.24 + 3.8 * printerScale, printerPosition.z + .83 * printerScale],
   )
   fit([keypadPosition.x - 1.45 * keypadScale, -2.24, 1.61], [keypadPosition.x + 1.45 * keypadScale, -1.33, 3.4])
   const farDistance = Math.max(34, Math.min(70, 30 / aspect))
+  const browseSpan = (COUPON_BOX_WIDTH + Math.abs(COUPON_PREVIEW_X)) * stackScale
+  const browseDistance = Math.max(7.2, browseSpan / (2 * halfHeight * aspect * .83))
+  const browseTarget = stackPosition.clone().add(new THREE.Vector3(COUPON_PREVIEW_X * stackScale / 2, .92 * stackScale, .02))
+  const drawerDistance = Math.max(8.8, (DRAWER_WIDTH + .85) / (2 * halfHeight * aspect * .9))
+  const drawerTarget = new THREE.Vector3(DRAWER_X + (portrait ? 0 : .52), -3.13, 4.96)
   return {
     portrait, machineX, stackPosition, stackScale, printerPosition, printerScale, keypadPosition, keypadScale,
     nearPosition: nearTarget.clone().addScaledVector(direction, distance), nearTarget,
+    browsePosition: browseTarget.clone().add(new THREE.Vector3(0, browseDistance * .8, browseDistance * .6)),
+    browseTarget,
+    drawerPosition: drawerTarget.clone().add(new THREE.Vector3(0, drawerDistance * .85, drawerDistance * .53)),
+    drawerTarget,
     farPosition: new THREE.Vector3(farDistance * 0.19, -3.8, farDistance),
     farTarget: new THREE.Vector3(-0.2, -0.65, 0),
   }
