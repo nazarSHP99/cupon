@@ -1,9 +1,14 @@
 import * as THREE from 'three'
+import { FLOWER_DRIFTS, FLOWER_TINTS, flowerDrift, meadowRandom, terrainHeight, TERRAIN_EXTENT } from './terrain'
 
 const TILE = 8
-const EXTENT = 96
 const up = new THREE.Vector3(0, 1, 0)
 const timeSlice = () => new Promise<void>(resolve => requestAnimationFrame(() => window.setTimeout(resolve, 0)))
+const softenGrassColor = `
+  float luminance = dot(texel.rgb, vec3(.2126, .7152, .0722));
+  texel.rgb = mix(texel.rgb, luminance * vec3(.92, 1.01, .76), .84);
+  diffuseColor *= texel;
+`
 
 export async function meadowTextures() {
   const loader = new THREE.TextureLoader()
@@ -30,17 +35,18 @@ export async function meadowTextures() {
 export function grassGroundMaterial(map: THREE.Texture) {
   const material = new THREE.MeshStandardMaterial({
     map, vertexColors: true, roughness: 1, metalness: 0,
-    bumpMap: map, bumpScale: .025,
+    bumpMap: map, bumpScale: .038,
   })
   // Two differently oriented samples hide repetition; mipmaps filter the fine blades.
   material.onBeforeCompile = shader => {
     shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
       vec4 groundA = texture2D(map, vMapUv);
       vec4 groundB = texture2D(map, vec2(vMapUv.y, -vMapUv.x)*.83 + vec2(.37,.61));
-      diffuseColor *= mix(groundA, groundB, .38);
+      vec4 texel = mix(groundA, groundB, .38);
+      ${softenGrassColor}
     `)
   }
-  material.customProgramCacheKey = () => 'meadow-textured-ground-v2'
+  material.customProgramCacheKey = () => 'meadow-textured-ground-v3'
   return material
 }
 
@@ -105,7 +111,7 @@ export class GrassField extends THREE.Group {
     this.name = 'dense-meadow-grass'
     this.material = new THREE.MeshLambertMaterial({
       map: atlas, side: THREE.DoubleSide, alphaTest: .58, alphaToCoverage: true,
-      color: '#e1e5cc',
+      color: '#ccd7c2',
     })
     const bounds = { value: atlasBounds(atlas) }
     this.material.onBeforeCompile = shader => {
@@ -130,45 +136,58 @@ export class GrassField extends THREE.Group {
           normal *= faceDirection;
         #endif
       `)
+      shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
+        vec4 texel = texture2D(map, vMapUv);
+        ${softenGrassColor}
+      `)
     }
-    this.material.customProgramCacheKey = () => 'dense-grass-atlas-v2'
+    this.material.customProgramCacheKey = () => 'dense-grass-atlas-v3'
   }
 
-  async prepare(height: (x: number, z: number) => number, cancelled: () => boolean) {
-    let seed = 951847
-    const random = () => {
-      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
-      return seed / 4294967296
-    }
+  async prepare(cancelled: () => boolean) {
+    const random = meadowRandom(951847)
     const pose = new THREE.Object3D(), normal = new THREE.Vector3()
     const yaw = new THREE.Quaternion(), color = new THREE.Color()
-    // Constant density across the entire terrain. Distance only changes card geometry.
-    const capacity = this.compact ? 768 : 1152
     let deadline = performance.now() + 7
-    for (let z = -EXTENT; z < EXTENT; z += TILE) for (let x = -EXTENT; x < EXTENT; x += TILE) {
+    for (let z = -TERRAIN_EXTENT; z < TERRAIN_EXTENT; z += TILE) for (let x = -TERRAIN_EXTENT; x < TERRAIN_EXTENT; x += TILE) {
       if (cancelled()) return
-      const mesh = new THREE.InstancedMesh(this.farGeometry, this.material, capacity)
       const centerX = x+TILE/2, centerZ = z+TILE/2
+      const approach = Math.abs(centerX) < 30 && centerZ > -30 && centerZ < 70
+      const capacity = approach ? (this.compact ? 820 : 1230) : (this.compact ? 540 : 820)
+      const mesh = new THREE.InstancedMesh(this.farGeometry, this.material, capacity)
+      const drifts = FLOWER_DRIFTS.filter(drift =>
+        Math.hypot(drift.x - centerX, drift.z - centerZ) < drift.width * 1.3 + TILE,
+      )
+      let minY = Infinity, maxY = -Infinity
       for (let i = 0; i < capacity; i++) {
-        // Independent random coordinates remove the diagonal lattice of the old sampler.
         const px = x + random()*TILE, pz = z + random()*TILE
-        const y = height(px, pz)
+        const y = terrainHeight(px, pz)
+        minY = Math.min(minY, y)
+        maxY = Math.max(maxY, y)
         const slopeStep = .12
-        normal.set(height(px-slopeStep, pz)-height(px+slopeStep, pz), slopeStep*2,
-          height(px, pz-slopeStep)-height(px, pz+slopeStep)).normalize()
+        normal.set(y - terrainHeight(px+slopeStep, pz), slopeStep, y - terrainHeight(px, pz+slopeStep)).normalize()
         yaw.setFromAxisAngle(up, random()*Math.PI*2)
         pose.quaternion.setFromUnitVectors(up, normal).multiply(yaw)
-        const width = (.64 + random()*.28) * (this.compact ? 1.15 : 1)
-        const length = .28 + random()*.19
+        const patch = .5 + Math.sin(px*.53 + pz*.21) * Math.cos(pz*.42 - px*.16) * .5
+        const width = (.54 + random()*.35) * (approach ? 1 : 1.21) * (this.compact ? 1.14 : 1)
+        const length = .15 + random()*.22 + patch*.11
         pose.scale.set(width, length, width)
-        pose.position.set(px, y-.018, pz)
+        pose.position.set(px, y-.045, pz)
         pose.updateMatrix()
         mesh.setMatrixAt(i, pose.matrix)
-        const tone = .86 + Math.sin(px*.16 + pz*.11)*.065 + random()*.12
-        mesh.setColorAt(i, color.setRGB(tone, Math.min(1, tone+.025), tone*.93))
+        const tone = .62 + patch*.25 + random()*.13
+        color.setRGB(tone * (1.03 - patch*.08), tone, tone * (.89 + patch*.13))
+        for (const drift of drifts) {
+          const bloom = flowerDrift(drift, px, pz)
+          if (bloom > 0) color.lerp(FLOWER_TINTS[drift.species], bloom * .85)
+        }
+        mesh.setColorAt(i, color)
       }
       mesh.receiveShadow = Math.abs(centerX) < 20 && Math.abs(centerZ) < 20
-      mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(centerX, height(centerX, centerZ), centerZ), 8.5)
+      mesh.boundingSphere = new THREE.Sphere(
+        new THREE.Vector3(centerX, (minY + maxY) / 2, centerZ),
+        Math.hypot(TILE / 2 + 1, TILE / 2 + 1, (maxY - minY) / 2 + 1),
+      )
       this.tiles.push(mesh)
       this.add(mesh)
       if (performance.now() > deadline) {

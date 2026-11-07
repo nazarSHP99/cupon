@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { Phase } from './MachineScene'
+import type { Phase } from '../MachineScene'
 
 const columns = 78
 const rows = 39

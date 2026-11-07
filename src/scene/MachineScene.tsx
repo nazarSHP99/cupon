@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
-import { DEMO_COUPONS, type Coupon } from './coupon'
+import { DEMO_COUPONS, type Coupon } from '../coupons/coupon'
+import { PRINT_DURATION, type Receipt } from '../coupons/receipt'
 import { DEMO_LAYOUT, DEMO_WIDTH, getSceneLayout, sceneCamera } from './sceneLayout'
-import { ReceiptPrinter } from './ReceiptPrinter'
-import { PRINT_DURATION, type Receipt } from './receipt'
-import { LedDisplay } from './LedDisplay'
-import { Meadow, woodenTable } from './Meadow'
-import { Keycaps, KEY_TOP } from './Keycaps'
+import { ReceiptPrinter } from './terminal/ReceiptPrinter'
+import { LedDisplay } from './terminal/LedDisplay'
+import { woodenTable } from './terminal/woodenTable'
+import { Keycaps, KEY_TOP } from './terminal/Keycaps'
+import { Meadow } from './meadow/Meadow'
 
 export type Phase = 'empty' | 'ready' | 'inserting' | 'printing' | 'success'
 export type DragHint = 'idle' | 'dragging' | 'over'
@@ -147,6 +148,7 @@ class TerminalScene {
     this.renderer.domElement.setAttribute('role', 'img')
     this.host.appendChild(this.renderer.domElement)
     this.meadow = new Meadow(host.clientWidth < 760)
+    this.scene.fog = new THREE.Fog('#acc3c8', 38, 153)
     this.scene.add(this.meadow)
     this.scene.add(new THREE.HemisphereLight('#e5f1ff', '#b6b4a1', 1.75))
     const key = new THREE.DirectionalLight('#fff7e8', 2.15)

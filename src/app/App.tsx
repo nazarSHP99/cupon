@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
-import { DEMO_COUPONS, readCoupon, type Coupon } from './coupon'
-import { Icon } from './Icons'
-import { useReducedMotion, useSound } from './hooks'
-import { createReceipt, downloadReceipt, FEED_DURATION, PRINT_DURATION, type Receipt } from './receipt'
-import type { DragHint, Phase } from './MachineScene'
+import { DEMO_COUPONS, readCoupon, type Coupon } from '../coupons/coupon'
+import { createReceipt, downloadReceipt, FEED_DURATION, PRINT_DURATION, type Receipt } from '../coupons/receipt'
+import { Icon } from '../components/Icons'
+import { useReducedMotion } from '../hooks/useReducedMotion'
+import { useSound } from '../hooks/useSound'
+import type { DragHint, Phase } from '../scene/MachineScene'
 
-const MachineScene = lazy(() => import('./MachineScene'))
+const MachineScene = lazy(() => import('../scene/MachineScene'))
 
 function BootMachine({ ready }: { ready: boolean }) {
   return <div className={`boot ${ready ? 'boot--done' : ''}`} role="status" aria-hidden={ready}>

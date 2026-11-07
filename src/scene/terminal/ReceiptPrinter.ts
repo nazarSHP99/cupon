@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
-import type { Receipt } from './receipt'
+import type { Receipt } from '../../coupons/receipt'
 
 function bodyPart(parent: THREE.Group, size: [number, number, number], position: [number, number, number], color: string, radius = 0.06) {
   const mesh = new THREE.Mesh(new RoundedBoxGeometry(...size, 4, radius), new THREE.MeshStandardMaterial({ color, roughness: 0.48 }))
