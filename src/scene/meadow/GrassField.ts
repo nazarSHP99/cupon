@@ -1,194 +1,201 @@
 import * as THREE from 'three'
-import { FLOWER_DRIFTS, FLOWER_TINTS, flowerDrift, meadowRandom, terrainHeight, TERRAIN_EXTENT } from './terrain'
+import { TERRAIN_EXTENT, TURF_GREEN, TURF_OLIVE, meadowRandom, turfTone } from './terrain'
 
 const TILE = 8
-const up = new THREE.Vector3(0, 1, 0)
+const DISTANT_TILE = 16
+const FIELD_X = 40
+const FIELD_BACK = -32
+const FIELD_FRONT = 88
 const timeSlice = () => new Promise<void>(resolve => requestAnimationFrame(() => window.setTimeout(resolve, 0)))
-const softenGrassColor = `
-  float luminance = dot(texel.rgb, vec3(.2126, .7152, .0722));
-  texel.rgb = mix(texel.rgb, luminance * vec3(.92, 1.01, .76), .84);
-  diffuseColor *= texel;
-`
 
-export async function meadowTextures() {
-  const loader = new THREE.TextureLoader()
-  const results = await Promise.allSettled([
-    loader.loadAsync(`${import.meta.env.BASE_URL}grass-ground.jpg`),
-    loader.loadAsync(`${import.meta.env.BASE_URL}grass-atlas.png`),
-  ])
-  if (results.some(result => result.status === 'rejected')) {
-    for (const result of results) if (result.status === 'fulfilled') result.value.dispose()
-    throw new Error('Meadow textures could not be loaded')
-  }
-  const [ground, atlas] = results.map(result => (result as PromiseFulfilledResult<THREE.Texture>).value)
-  for (const map of [ground, atlas]) {
-    map.colorSpace = THREE.SRGBColorSpace
-    map.anisotropy = 8
-    map.minFilter = THREE.LinearMipmapLinearFilter
-    map.magFilter = THREE.LinearFilter
-  }
-  ground.wrapS = ground.wrapT = THREE.RepeatWrapping
-  ground.repeat.set(38.4, 38.4)
-  return { ground, atlas }
+export async function meadowGroundTexture() {
+  const map = await new THREE.TextureLoader().loadAsync(`${import.meta.env.BASE_URL}grass-ground.jpg`)
+  map.colorSpace = THREE.SRGBColorSpace
+  map.anisotropy = 8
+  map.wrapS = map.wrapT = THREE.RepeatWrapping
+  map.repeat.set(45, 45)
+  return map
 }
 
 export function grassGroundMaterial(map: THREE.Texture) {
-  const material = new THREE.MeshStandardMaterial({
-    map, vertexColors: true, roughness: 1, metalness: 0,
-    bumpMap: map, bumpScale: .038,
-  })
-  // Two differently oriented samples hide repetition; mipmaps filter the fine blades.
+  const material = new THREE.MeshLambertMaterial({ map, vertexColors: true })
   material.onBeforeCompile = shader => {
     shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
-      vec4 groundA = texture2D(map, vMapUv);
-      vec4 groundB = texture2D(map, vec2(vMapUv.y, -vMapUv.x)*.83 + vec2(.37,.61));
-      vec4 texel = mix(groundA, groundB, .38);
-      ${softenGrassColor}
+      vec3 grainA = texture2D(map, vMapUv).rgb;
+      vec3 grainB = texture2D(map, vec2(vMapUv.y, -vMapUv.x) * .83 + vec2(.37, .61)).rgb;
+      vec3 coarse = texture2D(map, vMapUv * .31 + vec2(.24, .43)).rgb;
+      vec3 luminance = vec3(.2126, .7152, .0722);
+      float fine = smoothstep(.025, .27, dot(mix(grainA, grainB, .37), luminance)) - .5;
+      float broad = smoothstep(.025, .27, dot(coarse, luminance)) - .5;
+      float detail = 1. - smoothstep(20., 52., length(vViewPosition));
+      diffuseColor.rgb *= .89 + fine * mix(.07, .34, detail) + broad * mix(.31, .17, detail);
     `)
   }
-  material.customProgramCacheKey = () => 'meadow-textured-ground-v3'
   return material
 }
 
-function atlasBounds(texture: THREE.Texture) {
-  const image = texture.image as HTMLImageElement
-  const canvas = document.createElement('canvas')
-  canvas.width = image.width
-  canvas.height = image.height
-  const context = canvas.getContext('2d', { willReadFrequently: true })!
-  context.drawImage(image, 0, 0)
-  const { data } = context.getImageData(0, 0, image.width, image.height)
-  const bounds: THREE.Vector4[] = []
-  for (let row = 0; row < 2; row++) for (let column = 0; column < 2; column++) {
-    const x0 = Math.floor(column * image.width / 2), x1 = Math.floor((column + 1) * image.width / 2)
-    const y0 = Math.floor(row * image.height / 2), y1 = Math.floor((row + 1) * image.height / 2)
-    let left = x1, right = x0, top = y1, bottom = y0
-    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
-      if (data[(y * image.width + x) * 4 + 3] < 190) continue
-      left = Math.min(left, x); right = Math.max(right, x)
-      top = Math.min(top, y); bottom = Math.max(bottom, y)
-    }
-    if (left > right) { left = x0; right = x1 - 1; top = y0; bottom = y1 - 1 }
-    left = Math.max(x0, left - 3); right = Math.min(x1 - 1, right + 3)
-    top = Math.max(y0, top - 3); bottom = Math.min(y1 - 1, bottom + 3)
-    bounds.push(new THREE.Vector4(left / image.width, 1 - bottom / image.height,
-      (right - left) / image.width, (bottom - top) / image.height))
-  }
-  return bounds
-}
+const ribbon = new THREE.Float32BufferAttribute([
+  -.48, 0, 0, .48, 0, 0,
+  -.49, .39, .15, .43, .39, .2,
+  -.29, .74, .56, .25, .74, .63,
+  .07, 1, 1.34,
+], 3)
+const ribbonIndices = new THREE.Uint16BufferAttribute([0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4, 4, 5, 6], 1)
+const distantBlade = new THREE.Float32BufferAttribute([-.48, 0, 0, .48, 0, 0, .11, 1, 1.1], 3)
+const bladeNormals = new THREE.Float32BufferAttribute(Array.from({ length: ribbon.count }, () => [0, 1, 0]).flat(), 3)
 
-function patchGeometry(cards: number) {
-  const positions: number[] = [], normals: number[] = [], uv: number[] = [], indices: number[] = []
-  for (let i = 0; i < cards; i++) {
-    const angle = i * Math.PI / cards
-    const c = Math.cos(angle), s = Math.sin(angle), start = positions.length / 3
-    for (const [x, y] of [[-.5, 0], [.5, 0], [-.5, 1], [.5, 1]]) {
-      positions.push(c*x + s*y*.13, y, s*x - c*y*.13)
-      // Canopy lighting, shared by both faces, avoids alternating dark crossed cards.
-      normals.push(0, 1, 0)
-      uv.push(x + .5, y)
-    }
-    indices.push(start, start+1, start+2, start+1, start+3, start+2)
+function bladeMaterial(wind: { value: number }, distance: number, detailed: boolean) {
+  const material = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide })
+  material.onBeforeCompile = shader => {
+    shader.uniforms.grassWind = wind
+    shader.uniforms.grassRange = { value: distance }
+    shader.uniforms.grassGreen = { value: TURF_GREEN }
+    shader.uniforms.grassOlive = { value: TURF_OLIVE }
+    shader.vertexShader = `
+      attribute vec4 bladeRoot;
+      attribute vec4 bladeStyle;
+      attribute vec2 bladeSlope;
+      uniform float grassWind;
+      uniform float grassRange;
+      varying float bladeTone;
+      varying float bladeShade;
+    ` + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <beginnormal_vertex>', `
+      #include <beginnormal_vertex>
+      objectNormal = normalize(vec3(bladeSlope.x, .92, bladeSlope.y));
+    `)
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `
+      #include <begin_vertex>
+      vec3 root = bladeRoot.xyz;
+      float distance = length(cameraPosition - (modelMatrix * vec4(root, 1.)).xyz);
+      float detail = 1. - smoothstep(grassRange * .57, grassRange, distance);
+      detail *= smoothstep(0., 7., ${FIELD_X}. - abs(root.x))
+        * smoothstep(${FIELD_BACK}., ${FIELD_BACK + 7}., root.z)
+        * (1. - smoothstep(${FIELD_FRONT - 7}., ${FIELD_FRONT}., root.z));
+      float growth = ${detailed ? 'detail' : 'smoothstep(.02, .66, 1. - detail)'};
+      float y = position.y;
+      vec2 span = vec2(position.x * bladeStyle.x - position.z * bladeStyle.y,
+                       position.x * bladeStyle.y + position.z * bladeStyle.x);
+      ${detailed ? 'span += vec2(.47, .25) * sin(grassWind * 1.7 + root.x * .32 + root.z * .44) * y * y;' : ''}
+      transformed = root + vec3(span.x * bladeStyle.z, y * bladeRoot.w, span.y * bladeStyle.z) * growth;
+      bladeTone = bladeStyle.w;
+      bladeShade = ${detailed ? 'mix(.89, mix(.59, 1.13, sqrt(y)), detail)' : 'mix(.73, 1.04, sqrt(y))'};
+    `)
+    shader.fragmentShader = `
+      uniform vec3 grassGreen;
+      uniform vec3 grassOlive;
+      varying float bladeTone;
+      varying float bladeShade;
+    ` + shader.fragmentShader
+    shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `
+      #include <color_fragment>
+      diffuseColor.rgb *= mix(grassGreen, grassOlive, bladeTone) * bladeShade;
+    `)
+    // A blade's two faces share canopy lighting. Turning the back normal down
+    // would make thin blades flash as they sway past the camera.
+    shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', `
+      #include <normal_fragment_begin>
+      normal *= faceDirection;
+    `)
   }
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
-  geometry.setIndex(indices)
-  return geometry
+  material.customProgramCacheKey = () => detailed ? 'meadow-blade-detailed' : 'meadow-blade-distant'
+  return material
 }
 
 export class GrassField extends THREE.Group {
   private wind = { value: 0 }
-  private tiles: THREE.InstancedMesh[] = []
-  private nearGeometry = patchGeometry(3)
-  private farGeometry = patchGeometry(2)
-  private lastPosition = new THREE.Vector2(Infinity, Infinity)
-  private material: THREE.MeshLambertMaterial
+  private detailTiles: THREE.Mesh<THREE.InstancedBufferGeometry>[] = []
+  private lastPosition = new THREE.Vector3(Infinity, Infinity, Infinity)
+  private range: number
 
-  constructor(atlas: THREE.Texture, private compact: boolean) {
+  constructor(private compact: boolean) {
     super()
-    this.name = 'dense-meadow-grass'
-    this.material = new THREE.MeshLambertMaterial({
-      map: atlas, side: THREE.DoubleSide, alphaTest: .58, alphaToCoverage: true,
-      color: '#ccd7c2',
-    })
-    const bounds = { value: atlasBounds(atlas) }
-    this.material.onBeforeCompile = shader => {
-      shader.uniforms.grassWind = this.wind
-      shader.uniforms.grassBounds = bounds
-      shader.vertexShader = 'uniform float grassWind;\nuniform vec4 grassBounds[4];\n' + shader.vertexShader
-      shader.vertexShader = shader.vertexShader.replace('#include <uv_vertex>', `
-        #include <uv_vertex>
-        vec4 patchBounds = grassBounds[int(mod(float(gl_InstanceID), 4.))];
-        vMapUv = patchBounds.xy + uv * patchBounds.zw;
-      `)
-      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `
-        #include <begin_vertex>
-        vec3 root = instanceMatrix[3].xyz;
-        float breeze = sin(grassWind*.85 + root.x*.18 + root.z*.21);
-        transformed.x += breeze * position.y * position.y * .055;
-        transformed.z += cos(grassWind*.63 + root.z*.27) * position.y * position.y * .035;
-      `)
-      shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', `
-        #include <normal_fragment_begin>
-        #ifdef DOUBLE_SIDED
-          normal *= faceDirection;
-        #endif
-      `)
-      shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
-        vec4 texel = texture2D(map, vMapUv);
-        ${softenGrassColor}
-      `)
-    }
-    this.material.customProgramCacheKey = () => 'dense-grass-atlas-v3'
+    this.name = 'meadow-grass-blades'
+    this.range = compact ? 36 : 46
   }
 
-  async prepare(cancelled: () => boolean) {
-    const random = meadowRandom(951847)
-    const pose = new THREE.Object3D(), normal = new THREE.Vector3()
-    const yaw = new THREE.Quaternion(), color = new THREE.Color()
+  async prepare(ground: THREE.PlaneGeometry, cancelled: () => boolean) {
+    await this.plant(ground, true, cancelled)
+    if (!cancelled()) await this.plant(ground, false, cancelled)
+  }
+
+  private async plant(ground: THREE.PlaneGeometry, detailed: boolean, cancelled: () => boolean) {
+    const random = meadowRandom(detailed ? 951847 : 715419)
+    const material = bladeMaterial(this.wind, this.range, detailed)
+    const positions = ground.getAttribute('position')
+    const normals = ground.getAttribute('normal')
+    const { width, height, widthSegments, heightSegments } = ground.parameters
+    const stride = widthSegments + 1
+    const cellWidth = width / widthSegments, cellDepth = height / heightSegments
+    const tileSize = detailed ? TILE : DISTANT_TILE
+    const extentX = detailed ? FIELD_X : TERRAIN_EXTENT
+    const back = detailed ? FIELD_BACK : -TERRAIN_EXTENT
+    const front = detailed ? FIELD_FRONT : TERRAIN_EXTENT
     let deadline = performance.now() + 7
-    for (let z = -TERRAIN_EXTENT; z < TERRAIN_EXTENT; z += TILE) for (let x = -TERRAIN_EXTENT; x < TERRAIN_EXTENT; x += TILE) {
+
+    // Curved blades follow the camera route. The simpler layer reaches every ridge.
+    for (let z = back; z < front; z += tileSize) for (let x = -extentX; x < extentX; x += tileSize) {
       if (cancelled()) return
-      const centerX = x+TILE/2, centerZ = z+TILE/2
-      const approach = Math.abs(centerX) < 30 && centerZ > -30 && centerZ < 70
-      const capacity = approach ? (this.compact ? 820 : 1230) : (this.compact ? 540 : 820)
-      const mesh = new THREE.InstancedMesh(this.farGeometry, this.material, capacity)
-      const drifts = FLOWER_DRIFTS.filter(drift =>
-        Math.hypot(drift.x - centerX, drift.z - centerZ) < drift.width * 1.3 + TILE,
-      )
+      const centerX = x + tileSize / 2, centerZ = z + tileSize / 2
+      const foreground = Math.abs(centerX) <= 20 && centerZ >= -12
+      const density = detailed
+        ? foreground ? (this.compact ? 88 : 150) : (this.compact ? 32 : 52)
+        : this.compact ? 9 : 13
+      const cells = Math.floor(tileSize * Math.sqrt(density))
+      const count = cells * cells
+      const roots = new Float32Array(count * 4)
+      const styles = new Float32Array(count * 4)
+      const slopes = new Int8Array(count * 2)
       let minY = Infinity, maxY = -Infinity
-      for (let i = 0; i < capacity; i++) {
-        const px = x + random()*TILE, pz = z + random()*TILE
-        const y = terrainHeight(px, pz)
+
+      for (let index = 0; index < count; index++) {
+        const px = x + (index % cells + random()) * tileSize / cells
+        const pz = z + (Math.floor(index / cells) + random()) * tileSize / cells
+        const gx = (px + width / 2) / cellWidth, gz = (pz + height / 2) / cellDepth
+        const ix = Math.floor(gx), iz = Math.floor(gz)
+        const u = gx - ix, v = gz - iz
+        const corner = iz * stride + ix
+        const a = positions.getY(corner), b = positions.getY(corner + stride)
+        const d = positions.getY(corner + 1), c = positions.getY(corner + stride + 1)
+        // Match the two triangles of the rendered surface so roots never float.
+        const y = u + v <= 1 ? a + (d - a) * u + (b - a) * v : c + (b - c) * (1 - u) + (d - c) * (1 - v)
         minY = Math.min(minY, y)
         maxY = Math.max(maxY, y)
-        const slopeStep = .12
-        normal.set(y - terrainHeight(px+slopeStep, pz), slopeStep, y - terrainHeight(px, pz+slopeStep)).normalize()
-        yaw.setFromAxisAngle(up, random()*Math.PI*2)
-        pose.quaternion.setFromUnitVectors(up, normal).multiply(yaw)
-        const patch = .5 + Math.sin(px*.53 + pz*.21) * Math.cos(pz*.42 - px*.16) * .5
-        const width = (.54 + random()*.35) * (approach ? 1 : 1.21) * (this.compact ? 1.14 : 1)
-        const length = .15 + random()*.22 + patch*.11
-        pose.scale.set(width, length, width)
-        pose.position.set(px, y-.045, pz)
-        pose.updateMatrix()
-        mesh.setMatrixAt(i, pose.matrix)
-        const tone = .62 + patch*.25 + random()*.13
-        color.setRGB(tone * (1.03 - patch*.08), tone, tone * (.89 + patch*.13))
-        for (const drift of drifts) {
-          const bloom = flowerDrift(drift, px, pz)
-          if (bloom > 0) color.lerp(FLOWER_TINTS[drift.species], bloom * .85)
-        }
-        mesh.setColorAt(i, color)
+
+        const tone = turfTone(px, y, pz)
+        const yaw = random() * Math.PI * 2
+        const offset = index * 4
+        roots[offset] = px
+        roots[offset + 1] = y - .013
+        roots[offset + 2] = pz
+        const lengthVariation = random() ** 1.65
+        roots[offset + 3] = detailed ? .12 + .095 * tone + .24 * lengthVariation : .21 + .1 * tone + .28 * lengthVariation
+        styles[offset] = Math.cos(yaw)
+        styles[offset + 1] = Math.sin(yaw)
+        const widthVariation = random()
+        styles[offset + 2] = (detailed ? .036 + .034 * widthVariation : .08 + .062 * widthVariation) * (this.compact ? 1.1 : 1)
+        styles[offset + 3] = THREE.MathUtils.clamp(tone + (random() - .5) * (detailed ? .57 : .39), 0, 1)
+        const normal = Math.round(gz) * stride + Math.round(gx)
+        slopes[index * 2] = Math.round(normals.getX(normal) * 127)
+        slopes[index * 2 + 1] = Math.round(normals.getZ(normal) * 127)
       }
-      mesh.receiveShadow = Math.abs(centerX) < 20 && Math.abs(centerZ) < 20
-      mesh.boundingSphere = new THREE.Sphere(
+
+      const geometry = new THREE.InstancedBufferGeometry()
+      geometry.setAttribute('position', detailed ? ribbon : distantBlade)
+      geometry.setAttribute('normal', bladeNormals)
+      if (detailed) geometry.setIndex(ribbonIndices)
+      geometry.setAttribute('bladeRoot', new THREE.InstancedBufferAttribute(roots, 4))
+      geometry.setAttribute('bladeStyle', new THREE.InstancedBufferAttribute(styles, 4))
+      geometry.setAttribute('bladeSlope', new THREE.InstancedBufferAttribute(slopes, 2, true))
+      geometry.instanceCount = count
+      geometry.boundingSphere = new THREE.Sphere(
         new THREE.Vector3(centerX, (minY + maxY) / 2, centerZ),
-        Math.hypot(TILE / 2 + 1, TILE / 2 + 1, (maxY - minY) / 2 + 1),
+        Math.hypot(tileSize / 2 + .25, tileSize / 2 + .25, (maxY - minY) / 2 + .65),
       )
-      this.tiles.push(mesh)
+
+      const mesh = new THREE.Mesh(geometry, material)
+      mesh.receiveShadow = detailed && Math.abs(centerX) < 20 && Math.abs(centerZ) < 20
+      if (detailed) this.detailTiles.push(mesh)
       this.add(mesh)
       if (performance.now() > deadline) {
         await timeSlice()
@@ -199,20 +206,11 @@ export class GrassField extends THREE.Group {
 
   update(camera: THREE.Camera, time: number) {
     this.wind.value = time
-    const { x, z } = camera.position
-    if (Math.hypot(x-this.lastPosition.x, z-this.lastPosition.y) < .35) return
-    this.lastPosition.set(x, z)
-    for (const tile of this.tiles) {
-      const center = tile.boundingSphere!.center
-      tile.geometry = Math.hypot(center.x-x, center.z-z) < 30 ? this.nearGeometry : this.farGeometry
+    if (camera.position.distanceToSquared(this.lastPosition) < .09) return
+    this.lastPosition.copy(camera.position)
+    for (const tile of this.detailTiles) {
+      const { center, radius } = tile.geometry.boundingSphere!
+      tile.visible = center.distanceToSquared(camera.position) < (this.range + radius + .35) ** 2
     }
-  }
-
-  disposeUnusedGeometries() {
-    // One LOD geometry can be unreferenced when a scene is disposed during loading.
-    this.nearGeometry.dispose()
-    this.farGeometry.dispose()
-    this.material.map?.dispose()
-    this.material.dispose()
   }
 }

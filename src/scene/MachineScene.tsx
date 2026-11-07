@@ -160,11 +160,11 @@ class TerminalScene {
     this.renderer.domElement.setAttribute('role', 'img')
     this.host.appendChild(this.renderer.domElement)
     this.meadow = new Meadow(host.clientWidth < 760)
-    this.scene.fog = new THREE.Fog('#acc3c8', 38, 153)
+    this.scene.fog = new THREE.Fog('#c6b6c9', 37, 147)
     this.scene.add(this.meadow)
-    this.scene.add(new THREE.HemisphereLight('#e5f1ff', '#b6b4a1', 1.75))
-    const key = new THREE.DirectionalLight('#fff7e8', 2.15)
-    key.position.set(-12, 16, 8)
+    this.scene.add(new THREE.HemisphereLight('#e9e3fa', '#9b9d78', 1.55))
+    const key = new THREE.DirectionalLight('#ffe5ba', 2.2)
+    key.position.set(-15, 12, 8)
     key.target.position.set(0, -3.5, 0)
     key.castShadow = true
     key.shadow.mapSize.set(2048, 2048)
@@ -173,7 +173,7 @@ class TerminalScene {
     key.shadow.normalBias = 0.025
     key.shadow.radius = 3.5
     this.scene.add(key, key.target)
-    const rim = new THREE.DirectionalLight('#eaf5ff', .35)
+    const rim = new THREE.DirectionalLight('#ebd5fa', .38)
     rim.position.set(7, 5, -6)
     this.scene.add(rim)
     this.scene.add(this.machine)
@@ -601,7 +601,6 @@ class TerminalScene {
     canvas.removeEventListener('pointerleave', this.leave)
     canvas.remove()
     const release = () => {
-      this.meadow.dispose()
       disposeObject(this.scene)
       this.scene.traverse((object) => { if (object instanceof THREE.DirectionalLight) object.shadow.dispose() })
       this.renderer.dispose()

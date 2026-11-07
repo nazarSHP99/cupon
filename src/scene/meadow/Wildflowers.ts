@@ -3,9 +3,9 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { FLOWER_DRIFTS, flowerDrift, meadowRandom, terrainHeight } from './terrain'
 
 const SPECIES = [
-  { petal: '#9c79cb', tip: '#c4a4e5', center: '#8061a5' },
-  { petal: '#d489a8', tip: '#f1b5cb', center: '#c18b54' },
-  { petal: '#b49aca', tip: '#e8d7eb', center: '#d1ae6f' },
+  { petal: '#9666ca', tip: '#c698e8', center: '#8061a5' },
+  { petal: '#d58ab5', tip: '#efb3d2', center: '#c18b54' },
+  { petal: '#c0a5d6', tip: '#ede0f2', center: '#d1ae6f' },
 ]
 
 function flowerGeometry(species: number) {

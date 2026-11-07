@@ -1,9 +1,9 @@
 import * as THREE from 'three'
-import { GrassField, grassGroundMaterial, meadowTextures } from './GrassField'
-import { FLOWER_DRIFTS, FLOWER_TINTS, flowerDrift, terrainHeight, TERRAIN_EXTENT } from './terrain'
+import { GrassField, grassGroundMaterial, meadowGroundTexture } from './GrassField'
+import { FLOWER_DRIFTS, FLOWER_TINTS, TURF_GREEN, TURF_OLIVE, flowerDrift, terrainHeight, turfTone, TERRAIN_EXTENT } from './terrain'
 import { wildflowers } from './Wildflowers'
 
-const sun = new THREE.Vector3(-12, 19.5, 8).normalize()
+const sun = new THREE.Vector3(-15, 12, 8).normalize()
 
 function sky() {
   const material = new THREE.ShaderMaterial({
@@ -42,19 +42,21 @@ function sky() {
       void main() {
         vec3 ray = normalize(direction);
         float elev = max(ray.y + .075, 0.);
-        float blue = pow(clamp(elev * 1.9, 0., 1.), .48);
-        float warmth = pow(max(dot(ray, sun), 0.), 25.);
-        vec3 color = mix(vec3(.56,.72,.80), vec3(.16,.35,.51), blue);
-        color += warmth * vec3(.08,.065,.03);
+        float blue = pow(smoothstep(0., .62, elev), .66);
+        float lightSide = smoothstep(-.12, .78, -ray.x);
+        float warmth = pow(max(dot(ray, sun), 0.), 6.);
+        vec3 horizon = mix(vec3(.84,.62,.74), vec3(.97,.77,.66), lightSide);
+        vec3 color = mix(horizon, vec3(.28,.43,.67), blue);
+        color += warmth * vec3(.1,.072,.035);
         vec2 p = ray.xz / (.34 + elev) * vec2(1.8,4.2) + vec2(5.21 + drift, 1.14);
         p += vec2(noise(p*1.4), noise(p*1.4+7.)) * .19;
         float density = clouds(p);
-        float cover = smoothstep(.66,.83,density) * smoothstep(.003,.055,elev);
+        float cover = smoothstep(.60,.82,density) * smoothstep(.003,.055,elev);
         float shade = smoothstep(-.105,.075,density - clouds(p + vec2(-.21,.19)) + .024);
-        vec3 cloud = mix(vec3(.52,.67,.80), vec3(1.,.99,.96), shade);
-        cloud = mix(cloud, vec3(.85,.92,.98), (1.-smoothstep(0.,.22,elev))*.16);
+        vec3 cloud = mix(vec3(.55,.48,.66), vec3(1.,.89,.78), shade);
+        cloud = mix(cloud, horizon, (1.-smoothstep(0.,.24,elev))*.21);
         float rim = max(0., smoothstep(.55,.67,density) - cover) * smoothstep(.01,.045,elev);
-        color = mix(color, cloud, cover*.49);
+        color = mix(color, cloud, cover*.68);
         color += rim * warmth * vec3(.048,.039,.02);
         gl_FragColor = vec4(color, 1.);
         #include <colorspace_fragment>
@@ -82,43 +84,38 @@ export class Meadow extends THREE.Group {
   async prepare(cancelled: () => boolean) {
     await timeSlice()
     if (cancelled()) return
-    const maps = await meadowTextures()
-    if (cancelled()) { maps.ground.dispose(); maps.atlas.dispose(); return }
+    const map = await meadowGroundTexture()
+    if (cancelled()) { map.dispose(); return }
     const ground = new THREE.PlaneGeometry(TERRAIN_EXTENT * 2, TERRAIN_EXTENT * 2, 256, 256).rotateX(-Math.PI / 2)
     const vertices = ground.getAttribute('position')
     const colors = new Float32Array(vertices.count * 3)
-    const deep = new THREE.Color('#9cab81')
-    const light = new THREE.Color('#f4f4d9')
     const color = new THREE.Color()
     let deadline = performance.now() + 7
     for (let i = 0; i < vertices.count; i++) {
       const x = vertices.getX(i), z = vertices.getZ(i)
       const y = terrainHeight(x, z)
       vertices.setY(i, y)
-      const variation = THREE.MathUtils.clamp(.41 + (y + 7) * .045
-        + Math.sin(x * .24 + z * .17) * .15 + Math.sin(x * .1 - z * .12) * .14, .06, .94)
-      color.copy(deep).lerp(light, variation)
+      color.copy(TURF_GREEN).lerp(TURF_OLIVE, turfTone(x, y, z))
       for (const drift of FLOWER_DRIFTS) {
         const bloom = flowerDrift(drift, x, z)
-        if (bloom > 0) color.lerp(FLOWER_TINTS[drift.species], bloom * .66)
+        if (bloom > 0) color.lerp(FLOWER_TINTS[drift.species], bloom * .5)
       }
       color.toArray(colors, i * 3)
       if (i % 1024 === 0 && performance.now() > deadline) {
         await timeSlice()
-        if (cancelled()) { ground.dispose(); maps.ground.dispose(); maps.atlas.dispose(); return }
+        if (cancelled()) { ground.dispose(); map.dispose(); return }
         deadline = performance.now() + 7
       }
     }
     ground.setAttribute('color', new THREE.BufferAttribute(colors, 3))
     ground.computeVertexNormals()
-    const field = new THREE.Mesh(ground, grassGroundMaterial(maps.ground))
+    const field = new THREE.Mesh(ground, grassGroundMaterial(map))
     field.receiveShadow = true
     field.name = 'textured-meadow-ground'
     this.add(field)
-    try { this.grass = new GrassField(maps.atlas, this.compact) }
-    catch (error) { maps.atlas.dispose(); throw error }
+    this.grass = new GrassField(this.compact)
     this.add(this.grass)
-    await this.grass.prepare(cancelled)
+    await this.grass.prepare(ground, cancelled)
     if (!cancelled()) this.add(wildflowers(this.compact))
   }
 
@@ -126,9 +123,5 @@ export class Meadow extends THREE.Group {
     this.dome.position.copy(camera.position)
     this.dome.material.uniforms.drift.value = time * .013
     this.grass?.update(camera, time)
-  }
-
-  dispose() {
-    this.grass?.disposeUnusedGeometries()
   }
 }

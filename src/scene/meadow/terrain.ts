@@ -1,6 +1,13 @@
 import { Color, MathUtils } from 'three'
 
 export const TERRAIN_EXTENT = 96
+export const TURF_GREEN = new Color('#396437')
+export const TURF_OLIVE = new Color('#88994d')
+
+export function turfTone(x: number, y: number, z: number) {
+  return MathUtils.clamp(.43 + (y + 6) * .016
+    + Math.sin(x * .25 + z * .17) * .2 + Math.sin(x * .105 - z * .14) * .19, .03, .96)
+}
 
 const HILLS = [
   { x: -22, z: -8, width: 20, depth: 29, rise: 11.5 },
@@ -59,9 +66,9 @@ export const FLOWER_DRIFTS = [
 ].map(drift => ({ ...drift, cos: Math.cos(drift.angle), sin: Math.sin(drift.angle) }))
 
 export const FLOWER_TINTS = [
-  new Color(1.14, .56, 1.48),
-  new Color(1.35, .61, 1.18),
-  new Color(1.23, .72, 1.46),
+  new Color('#7b5598'),
+  new Color('#a0668a'),
+  new Color('#a88cba'),
 ]
 
 export function flowerDrift(drift: typeof FLOWER_DRIFTS[number], x: number, z: number) {
