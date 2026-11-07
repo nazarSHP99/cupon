@@ -1,50 +1,61 @@
 import * as THREE from 'three'
 
+const FOV = 39
+const up = new THREE.Vector3(0, 1, 0)
+
+export const TABLE_WIDTH = 11.6
+export const TABLE_DEPTH = 7
+export const DEMO_WIDTH = 1.74
+export const DEMO_LAYOUT = [
+  { index: 1, x: -.68, z: -1.14, angle: .09 },
+  { index: 2, x: .58, z: .14, angle: -.12 },
+  { index: 0, x: -.54, z: 1.42, angle: .08 },
+]
+
 export function getSceneLayout(width: number, height: number) {
   const portrait = width < 760 && height > width * 0.8
-  const machineX = portrait ? 0.3 : 1.85
-  const stackPosition: [number, number, number] = portrait ? [-0.55, -2.225, 2] : [-2.45, -2.225, 1.1]
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100)
-  camera.position.set(...(portrait ? [1.7, 3.7, 10.5] : [4.4, 3.3, 10]) as [number, number, number])
-  camera.lookAt(0, 0, 0)
-  camera.updateMatrixWorld()
-  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0)
-  const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1)
-  const projected = new THREE.Box2()
-  const point = new THREE.Vector3()
-  const include = (min: [number, number, number], max: [number, number, number]) => {
+  const aspect = width / height
+  const machineX = portrait ? 0.81 : 2.18
+  const stackPosition = new THREE.Vector3(portrait ? -1.66 : -3.40, -2.225, 1.32)
+  const stackScale = portrait ? 0.69 : 1
+  const printerPosition = new THREE.Vector3(portrait ? -2.06 : -3.65, -2.24, -1.49)
+  const printerScale = portrait ? 0.66 : 1
+  const keypadScale = portrait ? 1 : 0.83
+  const keypadPosition = new THREE.Vector3(portrait ? 0.84 : -0.29, -2.24 + 0.47 * keypadScale, 2.43)
+  const direction = new THREE.Vector3(portrait ? 0.13 : 0.27, portrait ? 0.31 : 0.28, 1).normalize()
+  const right = new THREE.Vector3().crossVectors(up, direction).normalize()
+  const cameraUp = new THREE.Vector3().crossVectors(direction, right)
+  const nearTarget = new THREE.Vector3(portrait ? -0.25 : -0.62, portrait ? -0.15 : -0.27, 0.67)
+  const halfHeight = Math.tan(THREE.MathUtils.degToRad(FOV / 2))
+  let distance = 7.6
+  const fit = (min: number[], max: number[]) => {
     for (const x of [min[0], max[0]]) for (const y of [min[1], max[1]]) for (const z of [min[2], max[2]]) {
-      point.set(x, y, z).project(camera)
-      projected.expandByPoint(new THREE.Vector2(point.x, point.y))
+      const p = new THREE.Vector3(x, y, z).sub(nearTarget)
+      const fitX = Math.abs(p.dot(right)) / (halfHeight * aspect * 0.89)
+      const fitY = Math.abs(p.dot(cameraUp)) / (halfHeight * 0.88)
+      distance = Math.max(distance, p.dot(direction) + Math.max(fitX, fitY))
     }
   }
-  include([machineX - 1.7, -2.25, -0.7], [machineX + 1.7, 2.3, 2.1])
-  include([stackPosition[0] - 1.55, -2.25, stackPosition[2] - 1.1], [stackPosition[0] + 1.55, -2.05, stackPosition[2] + 1.1])
-  const size = projected.getSize(new THREE.Vector2())
-  const center = projected.getCenter(new THREE.Vector2())
-  const margin = Math.min(64, Math.max(18, width * 0.035))
-  const availableHeight = Math.max(120, height - (portrait ? 200 : 88))
-  const zoom = Math.min((width - margin * 2) / size.x, availableHeight / size.y)
-  const shiftUp = portrait ? 85 : 8
-  const target = right.multiplyScalar(center.x).add(up.multiplyScalar(center.y - shiftUp / zoom))
-  camera.position.add(target)
-  camera.lookAt(target)
-  camera.left = -width / 2
-  camera.right = width / 2
-  camera.top = height / 2
-  camera.bottom = -height / 2
-  camera.zoom = zoom
-  camera.updateProjectionMatrix()
-  camera.updateMatrixWorld()
-  const printerPosition: [number, number, number] = portrait ? [-1.88, -2.24, 0.4] : [stackPosition[0] - 1.45, -2.24, stackPosition[2] - 2.3]
-  return {
-    portrait,
-    machineX,
-    stackPosition,
-    zoom,
-    cameraPosition: camera.position.toArray() as [number, number, number],
-    cameraTarget: target.toArray() as [number, number, number],
-    printerPosition,
-    printerScale: portrait ? 0.5 : 1,
+  fit([machineX - 1.67, -2.24, -0.66], [machineX + 1.67, 2.28, 2.09])
+  for (const { x, z } of DEMO_LAYOUT) {
+    const px = stackPosition.x + x * stackScale
+    const pz = stackPosition.z + z * stackScale
+    fit([px - .96 * stackScale, -2.25, pz - .63 * stackScale], [px + .96 * stackScale, -2.05, pz + .63 * stackScale])
   }
+  fit(
+    [printerPosition.x - 1.16 * printerScale, -2.24, printerPosition.z - .83 * printerScale],
+    [printerPosition.x + 1.16 * printerScale, -2.24 + 3.8 * printerScale, printerPosition.z + .83 * printerScale],
+  )
+  fit([keypadPosition.x - 1.45 * keypadScale, -2.24, 1.61], [keypadPosition.x + 1.45 * keypadScale, -1.33, 3.4])
+  const farDistance = Math.max(34, Math.min(70, 30 / aspect))
+  return {
+    portrait, machineX, stackPosition, stackScale, printerPosition, printerScale, keypadPosition, keypadScale,
+    nearPosition: nearTarget.clone().addScaledVector(direction, distance), nearTarget,
+    farPosition: new THREE.Vector3(farDistance * 0.19, -3.8, farDistance),
+    farTarget: new THREE.Vector3(-0.2, -0.65, 0),
+  }
+}
+
+export function sceneCamera() {
+  return new THREE.PerspectiveCamera(FOV, 1, 0.12, 210)
 }

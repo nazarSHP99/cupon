@@ -7,6 +7,33 @@ import type { DragHint, Phase } from './MachineScene'
 
 const MachineScene = lazy(() => import('./MachineScene'))
 
+function BootMachine({ ready }: { ready: boolean }) {
+  return <div className={`boot ${ready ? 'boot--done' : ''}`} role="status" aria-hidden={ready}>
+    <div className="boot-panel">
+      <div className="boot-machine" aria-hidden="true">
+        <svg viewBox="0 0 144 176" width="144" height="176">
+          <rect x="28" y="12" width="88" height="112" rx="16" fill="#f5f0df" stroke="#333b30" strokeWidth="2" />
+          <rect x="39" y="26" width="66" height="30" rx="6" fill="#e6edce" stroke="#333b30" strokeWidth="2" />
+          <path d="M61 42h2m18 0h2m-16 4q5 6 10 0" fill="none" stroke="#333b30" strokeWidth="2.25" strokeLinecap="round" />
+          <path d="M45 123v5m54-5v5" stroke="#333b30" strokeWidth="5" strokeLinecap="round" />
+        </svg>
+        <div className="boot-feed">
+          <svg className="boot-coupon" viewBox="0 0 62 42" width="62" height="42">
+            <path d="M7 1h48a6 6 0 0 1 6 6v8a6 6 0 0 0 0 12v8a6 6 0 0 1-6 6H7a6 6 0 0 1-6-6v-8a6 6 0 0 0 0-12V7a6 6 0 0 1 6-6Z" fill="#fbb797" stroke="#333b30" strokeWidth="2" />
+            <path d="M45 7v28" stroke="#333b30" strokeWidth="1.5" strokeDasharray="2 4" strokeLinecap="round" />
+            <path d="M23 10l2.9 7.1L33 20l-7.1 2.9L23 30l-2.9-7.1L13 20l7.1-2.9Z" fill="#333b30" />
+          </svg>
+        </div>
+        <svg className="boot-slot" viewBox="0 0 78 16" width="78" height="16">
+          <rect x="1" y="1" width="76" height="14" rx="5" fill="#e87552" stroke="#333b30" strokeWidth="2" />
+          <path d="M9 8h60" stroke="#333b30" strokeWidth="3" strokeLinecap="round" />
+        </svg>
+      </div>
+      <span className="sr-only">Запускаю автомат</span>
+    </div>
+  </div>
+}
+
 export default function App() {
   const [coupon, setCoupon] = useState<Coupon | null>(null)
   const [receipt, setReceipt] = useState<Receipt | null>(null)
@@ -15,9 +42,14 @@ export default function App() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [saveError, setSaveError] = useState('')
-  const [uploadHover, setUploadHover] = useState(false)
+  const [fileOver, setFileOver] = useState(false)
   const [dragHint, setDragHint] = useState<DragHint>('idle')
   const [sound, setSound] = useState(false)
+  const [booted, setBooted] = useState(false)
+  const [fallback, setFallback] = useState(false)
+  const [near, setNear] = useState(false)
+  const scrollRoot = useRef<HTMLDivElement>(null)
+  const keypad = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const uploadButton = useRef<HTMLButtonElement>(null)
   const request = useRef(0)
@@ -25,7 +57,15 @@ export default function App() {
   const reducedMotion = useReducedMotion()
   const play = useSound(sound)
   const playRef = useRef(play)
+  const hoverCoupon = useCallback(() => play('paper'), [play])
   const busy = phase === 'inserting' || phase === 'printing'
+  const locked = busy || loading || saving
+  const controlsActive = booted && (near || fallback)
+
+  const sceneReady = useCallback((webglUnavailable = false) => {
+    setFallback(webglUnavailable)
+    setBooted(true)
+  }, [])
 
   useEffect(() => { phaseRef.current = phase }, [phase])
   useEffect(() => { playRef.current = play }, [play])
@@ -134,7 +174,7 @@ export default function App() {
   function fileDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault()
     event.stopPropagation()
-    setUploadHover(false)
+    setFileOver(false)
     if (busy || saving) return
     if (event.dataTransfer.files.length > 1) { setError('Обери один купон за раз.'); return }
     void selectFile(event.dataTransfer.files[0])
@@ -148,45 +188,85 @@ export default function App() {
     : dragHint === 'dragging' ? 'Піднеси купон до помаранчевої щілини'
     : coupon ? 'Усе готово. Можна вставляти.' : 'Автомат готовий до приємного'
 
-  return <div className={`app-shell phase-${phase}`} onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault() }} onDrop={fileDrop}>
-    <button className="icon-button sound-button" onClick={() => setSound(!sound)} aria-label={sound ? 'Вимкнути звук' : 'Увімкнути звук'} aria-pressed={sound} title={sound ? 'Звук увімкнено' : 'Звук вимкнено'}><Icon name={sound ? 'sound' : 'muted'} size={21} /></button>
+  function approach() {
+    const root = scrollRoot.current
+    root?.scrollTo({ top: root.scrollHeight, behavior: reducedMotion ? 'instant' : 'smooth' })
+  }
 
-    <main className="tabletop" aria-label="Купоноприймач і принтер чеків на столі">
-      <div className={`scene ${coupon && phase === 'ready' ? 'scene--ready' : ''} ${dragHint !== 'idle' ? 'scene--dragging' : ''}`} data-testid="machine-scene">
-        <Suspense fallback={<div className="scene-loading"><span className="button-spinner" /><span className="sr-only">Завантаження автомата</span></div>}>
-          <MachineScene coupon={coupon} receipt={receipt} phase={phase} reducedMotion={reducedMotion} onInsert={insert} onDragHint={setDragHint} dragHint={dragHint} onChooseDemo={demo} disabled={busy || loading || saving} />
-        </Suspense>
-      </div>
+  function toggleSound() {
+    if (!sound) play('click', true)
+    setSound(!sound)
+  }
 
-      <section aria-label="Вибір купона" className="controls">
-        <input ref={fileInput} className="file-input" id="coupon-file" type="file" accept=".png,.svg,image/png,image/svg+xml" onChange={fileChange} disabled={busy || loading || saving} tabIndex={-1} aria-label="Обрати файл купона" />
-        <div className={`upload-area ${uploadHover ? 'upload-area--hover' : ''} ${coupon ? 'upload-area--selected' : ''}`} onDragOver={event => { event.preventDefault(); if (!busy && event.dataTransfer.types.includes('Files')) setUploadHover(true) }} onDragLeave={() => setUploadHover(false)} onDrop={fileDrop}>
-          <button ref={uploadButton} className="upload-button" onClick={() => fileInput.current?.click()} disabled={busy || loading || saving} aria-describedby={error ? 'upload-error' : 'upload-formats'}>
-            <span className="upload-icon">{coupon ? <img src={coupon.src} alt="" /> : <Icon name="ticket" size={28} />}</span>
-            <span className="upload-text"><strong title={coupon?.name}>{loading ? 'Готую купон…' : coupon ? coupon.name : 'Обери свій купон'}</strong><span id="upload-formats">{coupon ? 'Змінити купон' : 'PNG / SVG'}</span></span>
-            <span className="upload-stub"><Icon name={coupon ? 'check' : 'upload'} size={21} /></span>
+  function nextDemo() {
+    const current = DEMO_COUPONS.findIndex(item => item.src === coupon?.src)
+    demo((current + 1) % DEMO_COUPONS.length)
+  }
+
+  return <>
+    <div ref={scrollRoot} className={`app-shell phase-${phase}`} data-near={near} data-fallback={fallback}
+      tabIndex={0} aria-label="Купон на пагорбі" inert={!booted}>
+      <main className="tabletop" aria-label="Купоноприймач і принтер чеків на дерев’яному столі"
+        onDragOver={event => {
+          if (!event.dataTransfer.types.includes('Files')) return
+          event.preventDefault()
+          if (controlsActive && !locked) setFileOver(true)
+        }}
+        onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFileOver(false) }}
+        onDrop={event => {
+          if (controlsActive) fileDrop(event)
+          else event.preventDefault()
+        }}>
+        <div className="scene" data-testid="machine-scene">
+          <Suspense fallback={null}>
+            <MachineScene coupon={coupon} receipt={receipt} phase={phase} reducedMotion={reducedMotion}
+              onInsert={insert} onDragHint={setDragHint} dragHint={dragHint} onChooseDemo={demo} onHoverCoupon={hoverCoupon} disabled={locked}
+              scrollRoot={scrollRoot} keypad={keypad} onReady={sceneReady} onApproach={setNear} />
+          </Suspense>
+        </div>
+
+        <input ref={fileInput} className="sr-only" type="file" accept=".png,.svg,image/png,image/svg+xml"
+          onChange={fileChange} disabled={locked} tabIndex={-1} aria-label="Обрати файл купона" />
+        <div ref={keypad} className="keypad" role="group" aria-label="Клавіатура купоноприймача" inert={!controlsActive}
+          onClickCapture={event => {
+            const button = (event.target as Element).closest('button')
+            if (button && !button.disabled) play('click')
+          }}>
+          <button ref={uploadButton} className={`key key--file ${fileOver ? 'key--lit' : ''}`}
+            onClick={() => fileInput.current?.click()} disabled={locked} aria-label="Обрати свій купон (PNG або SVG)" title="Обери свій PNG або SVG">
+            <Icon name="upload" size={35} /><span>{loading ? '…' : 'File'}</span>
+          </button>
+          <button className="key key--demo" onClick={nextDemo} disabled={locked} aria-label="Спробувати демо-купон" title="Спробуй демо-купон">
+            <Icon name="ticket" size={35} /><span>Demo</span>
+          </button>
+          <button className={`key key--insert ${phase === 'ready' ? 'key--lit' : ''}`}
+            onClick={insert} disabled={phase !== 'ready' || locked} aria-label="Вставити купон" title="Вставити купон">
+            <Icon name="insert" size={35} /><span>Insert</span>
+          </button>
+          <button className={`key ${sound ? 'key--lit' : ''}`} onClick={toggleSound}
+            aria-label={sound ? 'Вимкнути звук' : 'Увімкнути звук'} aria-pressed={sound} title={sound ? 'Вимкнути звук' : 'Увімкнути звук'}>
+            <Icon name={sound ? 'sound' : 'muted'} size={35} /><span>Sound</span>
+          </button>
+          <button className={`key key--save ${phase === 'success' ? 'key--lit' : ''}`}
+            onClick={() => void saveReceipt()} disabled={phase !== 'success' || saving} aria-label="Зберегти чек" title="Зберегти чек як PNG">
+            <Icon name="download" size={35} /><span>{saving ? '…' : 'Save'}</span>
+          </button>
+          <button className={`key ${phase === 'success' ? 'key--lit' : ''}`}
+            onClick={reset} disabled={phase !== 'success' || saving} aria-label="Спробувати з іншим купоном" title="Ще один купон">
+            <Icon name="again" size={35} /><span>Again</span>
           </button>
         </div>
-        {error && <p className="error" id="upload-error" role="alert">{error}</p>}
-        {!coupon && <button className="demo-button" onClick={() => demo()} disabled={loading}>Спробуй демокупон <Icon name="arrow" size={18} /></button>}
-      </section>
-      <p className="sr-only" role="status" aria-live="polite">{statusText}</p>
-    </main>
 
-    <nav className="steps-bar" aria-label="Етапи активації">
-      <div className={`action-dock ${phase !== 'empty' ? 'action-dock--visible' : ''}`}>
-        {(phase === 'ready' || busy) && <button className="insert-button" disabled={busy || loading} onClick={insert}><span>{phase === 'printing' ? 'Друкую чек…' : phase === 'inserting' ? 'Зчитую купон…' : 'Вставити купон'}</span>{busy ? <span className="button-spinner" /> : <Icon name="arrow" size={22} />}</button>}
-        {phase === 'success' && receipt && <div className="receipt-actions" aria-label="Готовий чек">
-          <button className="save-button" onClick={() => void saveReceipt()} disabled={saving}><Icon name="download" size={21} /><span>{saving ? 'Зберігаю…' : 'Зберегти чек'}</span><span className="file-format">PNG</span></button>
-          <button className="icon-button again-button" onClick={reset} disabled={saving} aria-label="Спробувати ще один купон" title="Ще один купон"><Icon name="again" size={22} /></button>
-        </div>}
-        {saveError && <p className="save-error" role="alert">{saveError}</p>}
-      </div>
-      <ol className="steps">
-        <li className={phase === 'empty' ? 'step-active' : 'step-complete'}><span>01</span> Обери</li>
-        <li className={phase === 'ready' || phase === 'inserting' ? 'step-active' : phase === 'printing' || phase === 'success' ? 'step-complete' : ''}><span>02</span> Встав</li>
-        <li className={phase === 'printing' || phase === 'success' ? 'step-active' : ''}><span>03</span> Усміхнись</li>
-      </ol>
-    </nav>
-  </div>
+        {!fallback && <button className="approach-cue" onClick={approach} tabIndex={near ? -1 : 0} aria-hidden={near} aria-label="Наблизитися до столу">
+          <span>Прокрути, щоб наблизитися</span><Icon name="down" size={17} />
+        </button>}
+        {(error || saveError) && <p className="scene-error" role="alert">{error || saveError}</p>}
+        <p className="sr-only" role="status" aria-live="polite">{statusText}</p>
+      </main>
+      {!fallback && <div className="scroll-runway" aria-hidden="true" />}
+    </div>
+
+    <BootMachine ready={booted} />
+  </>
 }
+

@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { DEMO_COUPONS, type Coupon } from './coupon'
-import { getSceneLayout } from './sceneLayout'
+import { DEMO_LAYOUT, DEMO_WIDTH, getSceneLayout, sceneCamera } from './sceneLayout'
 import { ReceiptPrinter } from './ReceiptPrinter'
 import { PRINT_DURATION, type Receipt } from './receipt'
+import { LedDisplay } from './LedDisplay'
+import { Meadow, woodenTable } from './Meadow'
+import { Keycaps, KEY_TOP } from './Keycaps'
 
 export type Phase = 'empty' | 'ready' | 'inserting' | 'printing' | 'success'
 export type DragHint = 'idle' | 'dragging' | 'over'
@@ -17,12 +20,25 @@ interface SceneProps {
   onInsert: () => void
   onDragHint: (hint: DragHint) => void
   onChooseDemo: (index: number) => void
+  onHoverCoupon: () => void
+  scrollRoot: RefObject<HTMLDivElement | null>
+  keypad: RefObject<HTMLDivElement | null>
+  onReady: (fallback?: boolean) => void
+  onApproach: (near: boolean) => void
   disabled: boolean
 }
 
 const rest = new THREE.Vector3(-0.22, -1.1, 2.05)
 const insertion = new THREE.Vector3(0, 0.105, 1.72)
 const ease = (t: number) => t * t * (3 - 2 * t)
+const KEYPAD_WIDTH = 360
+const KEYPAD_HEIGHT = 226
+const keypadPlane = new THREE.Matrix4().set(
+  2.7 / KEYPAD_WIDTH, 0, 0, -1.35,
+  0, -1.59 / KEYPAD_HEIGHT, 0, .795,
+  0, 0, 1, KEY_TOP,
+  0, 0, 0, 1,
+)
 
 function texture(width: number, height: number, draw: (context: CanvasRenderingContext2D) => void) {
   const canvas = document.createElement('canvas')
@@ -52,37 +68,60 @@ function plane(group: THREE.Group, size: [number, number], position: [number, nu
 }
 
 function disposeObject(root: THREE.Object3D) {
+  const geometries = new Set<THREE.BufferGeometry>()
+  const materials = new Set<THREE.Material>()
+  const textures = new Set<THREE.Texture>()
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return
-    object.geometry.dispose()
-    const materials = Array.isArray(object.material) ? object.material : [object.material]
-    for (const material of materials) {
-      if ('map' in material && material.map instanceof THREE.Texture) material.map.dispose()
-      material.dispose()
-    }
+    if (object instanceof THREE.InstancedMesh) object.dispose()
+    geometries.add(object.geometry)
+    for (const material of Array.isArray(object.material) ? object.material : [object.material]) materials.add(material)
   })
+  for (const material of materials) {
+    if ('map' in material && material.map instanceof THREE.Texture) textures.add(material.map)
+    if ('envMap' in material && material.envMap instanceof THREE.Texture) textures.add(material.envMap)
+    if ('bumpMap' in material && material.bumpMap instanceof THREE.Texture) textures.add(material.bumpMap)
+    material.dispose()
+  }
+  for (const geometry of geometries) geometry.dispose()
+  for (const map of textures) map.dispose()
 }
 
 class TerminalScene {
   private props: SceneProps
   private renderer: THREE.WebGLRenderer
   private scene = new THREE.Scene()
-  private camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100)
+  private camera = sceneCamera()
+  private meadow: Meadow
   private machine = new THREE.Group()
   private stack = new THREE.Group()
+  private keypad = new THREE.Group()
+  private keycaps = new Keycaps()
   private printer = new ReceiptPrinter()
   private cable = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial({ color: '#4c594a', roughness: 0.7 }))
   private hoveredDemo: THREE.Object3D | null = null
   private printStarted = 0
   private contact: THREE.Mesh
   private card: THREE.Group | null = null
-  private screen: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
+  private display: LedDisplay
+  private assets: Promise<void>
+  private compiling: Promise<THREE.Object3D> | null = null
+  private reportedReady = false
+  private shadowDirty = true
+  private near = false
+  private progress = 0
+  private scrollTarget = 0
+  private layout: ReturnType<typeof getSceneLayout> | null = null
+  private targetView = new THREE.Vector3()
+  private projection = new THREE.Matrix4()
+  private viewport = new THREE.Matrix4()
+  private touch: { id: number; start: number; last: number; moved: boolean; demo: THREE.Object3D | null } | null = null
   private light: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>
   private observer: ResizeObserver
   private animation = 0
   private previous = 0
   private clock = 0
-  private insertTime = 0
+  private insertStarted = 0
   private startPosition = rest.clone()
   private startRotation = new THREE.Euler()
   private dragging = false
@@ -98,31 +137,30 @@ class TerminalScene {
 
   constructor(private host: HTMLDivElement, props: SceneProps) {
     this.props = props
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.05
-    this.renderer.setClearColor(0x000000, 0)
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
+    this.renderer.shadowMap.autoUpdate = false
+    this.renderer.toneMapping = THREE.NeutralToneMapping
+    this.renderer.toneMappingExposure = .96
     this.renderer.domElement.setAttribute('aria-label', 'Купоноприймач, принтер чеків і демокупони на столі. Натисни на купон, щоб обрати. Перетягни його до приймача або скористайся кнопкою. Після активації принтер надрукує чек.')
     this.renderer.domElement.setAttribute('role', 'img')
     this.host.appendChild(this.renderer.domElement)
-    this.camera.position.set(4.4, 2.6, 10)
-    this.camera.lookAt(0, -0.04, 0.25)
-
-    this.scene.add(new THREE.AmbientLight(0xffffff, 1.7))
-    const key = new THREE.DirectionalLight(0xffffff, 3.3)
-    key.position.set(-3, 7, 6)
+    this.meadow = new Meadow(host.clientWidth < 760)
+    this.scene.add(this.meadow)
+    this.scene.add(new THREE.HemisphereLight('#e5f1ff', '#b6b4a1', 1.75))
+    const key = new THREE.DirectionalLight('#fff7e8', 2.15)
+    key.position.set(-12, 16, 8)
+    key.target.position.set(0, -3.5, 0)
     key.castShadow = true
     key.shadow.mapSize.set(2048, 2048)
-    Object.assign(key.shadow.camera, { left: -10, right: 10, top: 10, bottom: -10 })
+    Object.assign(key.shadow.camera, { left: -12, right: 12, top: 10, bottom: -10, far: 42 })
     key.shadow.bias = -0.0005
     key.shadow.normalBias = 0.025
-    key.shadow.radius = 5
-    this.scene.add(key)
-    const rim = new THREE.DirectionalLight(0xe6edd5, 1.2)
-    rim.position.set(5, 2, -3)
+    key.shadow.radius = 3.5
+    this.scene.add(key, key.target)
+    const rim = new THREE.DirectionalLight('#eaf5ff', .35)
+    rim.position.set(7, 5, -6)
     this.scene.add(rim)
     this.scene.add(this.machine)
     this.scene.add(this.printer)
@@ -133,9 +171,11 @@ class TerminalScene {
 
     box(this.machine, [3.28, 4.25, 1.22], [0, 0.15, -0.035], '#dedfc9', 0.22)
     box(this.machine, [3.12, 4.09, 0.18], [0, 0.16, 0.55], '#f3eedb', 0.16)
-    box(this.machine, [2.64, 1.43, 0.09], [0, 1.18, 0.615], '#c8c8b2', 0.045)
-    box(this.machine, [2.52, 1.29, 0.05], [0, 1.18, 0.634], '#1b2d28', 0.025)
-    this.screen = plane(this.machine, [2.47, 1.235], [0, 1.18, 0.667], this.screenTexture(props.phase))
+    box(this.machine, [2.83, 1.56, 0.17], [0, 1.18, 0.642], '#292923', 0.12, 0.24)
+    box(this.machine, [2.66, 1.39, 0.08], [0, 1.18, 0.724], '#dd9e62', 0.078, 0.15)
+    box(this.machine, [2.54, 1.29, 0.06], [0, 1.18, 0.765], '#141219', 0.045)
+    this.display = new LedDisplay(props.phase)
+    plane(this.machine, [2.47, 1.235], [0, 1.18, 0.798], this.display.texture)
 
     box(this.machine, [2.86, 0.63, 0.28], [0, 0.08, 0.72], '#d84f2e', 0.12)
     box(this.machine, [2.62, 0.22, 0.045], [0, 0.095, 0.874], '#a83b24', 0.022)
@@ -175,32 +215,29 @@ class TerminalScene {
     for (const x of [-1.08, 1.08]) box(this.machine, [0.47, 0.18, 0.7], [x, -2.14, -0.03], '#334439', 0.065)
     for (let i = 0; i < 6; i++) box(this.machine, [0.02, 0.045, 0.54], [1.645, -0.86 + i * 0.13, -0.07], '#9da78f', 0.009)
 
-    const table = new THREE.Group()
-    box(table, [30, 0.32, 9.6], [0, -2.42, -0.5], '#cdbb9a', 0.08)
-    box(table, [30, 0.035, 9.6], [0, -2.2575, -0.5], '#e5dbc4', 0.015)
-    this.scene.add(table)
-    this.scene.add(this.stack)
-    const arrangement = [
-      { index: 1, x: -0.34, z: -0.22, angle: 0.2 },
-      { index: 2, x: 0.05, z: 0.04, angle: -0.18 },
-      { index: 0, x: 0.22, z: 0.28, angle: 0.05 },
-    ]
-    arrangement.forEach(({ index, x, z, angle }, layer) => {
+    this.scene.add(woodenTable(), this.stack, this.keypad)
+    this.keypad.rotation.x = -1.08
+    box(this.keypad, [2.83, 1.72, .235], [0, 0, -.102], '#b9bdba', .11)
+    box(this.keypad, [2.74, 1.63, .08], [0, 0, -.018], '#d5d7d3', .073)
+    this.keypad.add(this.keycaps)
+    const manager = new THREE.LoadingManager()
+    this.assets = new Promise<void>(resolve => { manager.onLoad = resolve })
+    const demoTextures = new THREE.TextureLoader(manager)
+    DEMO_LAYOUT.forEach(({ index, x, z, angle }) => {
       const coupon = DEMO_COUPONS[index]
       const card = new THREE.Group()
       card.userData.couponIndex = index
-      const width = 2.4
+      const width = DEMO_WIDTH
       const height = width / coupon.aspect
       box(card, [width + 0.025, height + 0.025, 0.025], [0, 0, 0], '#fff9e8', 0.012)
-      const map = new THREE.TextureLoader().load(coupon.src)
+      const map = demoTextures.load(coupon.src)
       map.colorSpace = THREE.SRGBColorSpace
       map.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
       const art = new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshStandardMaterial({ map, roughness: 0.68 }))
       art.position.z = 0.014
       card.add(art)
-      card.position.set(x, layer * 0.027, z)
+      card.position.set(x, 0, z)
       card.rotation.set(-Math.PI / 2, 0, angle)
-      card.userData.baseY = layer * 0.027
       card.userData.baseAngle = angle
       this.stack.add(card)
     })
@@ -212,7 +249,7 @@ class TerminalScene {
       context.fillStyle = gradient
       context.fillRect(0, 0, 256, 256)
     })
-    this.contact = new THREE.Mesh(new THREE.PlaneGeometry(7, 5.5), new THREE.MeshBasicMaterial({ map: shadow, transparent: true, depthWrite: false }))
+    this.contact = new THREE.Mesh(new THREE.PlaneGeometry(5.4, 4.9), new THREE.MeshBasicMaterial({ map: shadow, transparent: true, depthWrite: false }))
     this.contact.rotation.x = -Math.PI / 2
     this.contact.position.y = -2.235
     this.scene.add(this.contact)
@@ -229,52 +266,63 @@ class TerminalScene {
     canvas.addEventListener('pointerleave', this.leave)
     this.observer = new ResizeObserver(this.resize)
     this.observer.observe(host)
+    this.props.scrollRoot.current?.addEventListener('scroll', this.scroll, { passive: true })
     this.resize()
+  }
+
+  async start() {
+    await Promise.all([this.assets, this.meadow.prepare(() => this.destroyed)])
+    if (this.destroyed) return
+    this.meadow.update(this.camera, 0)
+    this.compiling = this.renderer.compileAsync(this.scene, this.camera)
+    try { await this.compiling }
+    finally { this.compiling = null }
+    if (this.destroyed) return
     this.animation = requestAnimationFrame(this.frame)
   }
 
-  private screenTexture(phase: Phase) {
-    return texture(1200, 600, (context) => {
-      context.fillStyle = '#243a34'
-      context.fillRect(0, 0, 1200, 600)
-      context.fillStyle = '#93a59a'
-      context.font = '24px monospace'
-      context.fillText('CUPON TERMINAL / 001', 75, 80)
-      context.beginPath()
-      context.arc(1090, 71, 11, 0, Math.PI * 2)
-      context.fillStyle = phase === 'inserting' ? '#f8b473' : '#bcde9e'
-      context.fill()
-      context.fillStyle = '#f3efd9'
-      context.font = 'bold 87px Arial, sans-serif'
-      const lines: Record<Phase, [string, string]> = {
-        empty: ['ПРИВІТ,', 'КУПОНЕ.'], ready: ['О, ЦЕ ДЛЯ', 'МЕНЕ?'],
-        inserting: ['ТРОХИ', 'МАГІЇ...'], success: ['ПРИЄМНОГО', 'МОМЕНТУ!'],
-        printing: ['ДРУКУЮ', 'УСМІШКУ.'],
-      }
-      context.fillText(lines[phase][0], 70, 238)
-      context.fillText(lines[phase][1], 70, 337)
-      context.strokeStyle = '#4c6056'
-      context.lineWidth = 2
-      context.beginPath()
-      context.moveTo(75, 420)
-      context.lineTo(1125, 420)
-      context.stroke()
-      context.fillStyle = '#aebca9'
-      context.font = '25px monospace'
-      context.fillText(phase === 'inserting' ? 'ЗЧИТУЮ КУПОН' : phase === 'printing' ? 'ТВІЙ ЧЕК УЖЕ В ДОРОЗІ' : phase === 'success' ? 'ГОТОВО. УСМІХНИСЬ :)' : 'МАЛЕНЬКИЙ КУПОН. ВЕЛИКЕ ПРИЄМНО.', 75, 491)
-      context.fillStyle = '#bcde9e'
-      for (let i = 0; i < 3; i++) context.fillRect(75 + i * 35, 535, phase === 'inserting' ? 22 : 8, 7)
-    })
+  private scroll = () => {
+    const root = this.props.scrollRoot.current
+    if (!root) return
+    this.scrollTarget = THREE.MathUtils.clamp(root.scrollTop / Math.max(1, root.scrollHeight - root.clientHeight), 0, 1)
+  }
+
+  private positionCamera() {
+    const layout = this.layout
+    if (!layout) return
+    const travel = ease(this.progress)
+    this.camera.position.lerpVectors(layout.farPosition, layout.nearPosition, travel)
+    this.targetView.lerpVectors(layout.farTarget, layout.nearTarget, travel)
+    this.camera.lookAt(this.targetView)
+    this.camera.updateMatrixWorld()
+    this.keypad.updateMatrixWorld()
+    this.projection.copy(this.viewport).multiply(this.camera.projectionMatrix)
+      .multiply(this.camera.matrixWorldInverse).multiply(this.keypad.matrixWorld).multiply(keypadPlane)
+    const elements = this.projection.elements
+    if (this.props.keypad.current) {
+      this.props.keypad.current.style.transform = `matrix3d(${elements.map(value => value / elements[15]).join(',')})`
+    }
+    const near = this.progress > .87 && this.scrollTarget > .86
+    if (near !== this.near) {
+      this.near = near
+      if (!near) this.hoveredDemo = null
+      this.props.onApproach(near)
+    }
   }
 
   private resize = () => {
     const { width, height } = this.host.getBoundingClientRect()
     if (!width || !height) return
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.4, Math.sqrt(2_250_000 / (width * height))))
     this.renderer.setSize(width, height)
-    const layout = getSceneLayout(width, height)
+    this.shadowDirty = true
+    const layout = this.layout = getSceneLayout(width, height)
     this.machine.position.x = layout.machineX
-    this.stack.position.set(...layout.stackPosition)
-    this.printer.position.set(...layout.printerPosition)
+    this.stack.position.copy(layout.stackPosition)
+    this.stack.scale.setScalar(layout.stackScale)
+    this.keypad.position.copy(layout.keypadPosition)
+    this.keypad.scale.setScalar(layout.keypadScale)
+    this.printer.position.copy(layout.printerPosition)
     this.printer.scale.setScalar(layout.printerScale)
     const [px, py, pz] = layout.printerPosition
     const scale = layout.printerScale
@@ -288,15 +336,16 @@ class TerminalScene {
     this.cable.geometry.dispose()
     this.cable.geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(cablePoints), 72, layout.portrait ? 0.018 : 0.028, 8, false)
     this.contact.position.x = layout.machineX
-    this.camera.position.set(...layout.cameraPosition)
-    this.camera.lookAt(...layout.cameraTarget)
-    this.camera.left = -width / 2
-    this.camera.right = width / 2
-    this.camera.top = height / 2
-    this.camera.bottom = -height / 2
-    this.camera.zoom = layout.zoom
+    this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
-    this.camera.updateMatrixWorld()
+    this.viewport.set(
+      width / 2, 0, 0, width / 2,
+      0, -height / 2, 0, height / 2,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    )
+    this.scroll()
+    this.positionCamera()
   }
 
   private setCoupon(coupon: Coupon | null) {
@@ -326,10 +375,10 @@ class TerminalScene {
     if (props.receipt?.id !== this.props.receipt?.id) this.printer.setReceipt(props.receipt)
     if (props.coupon?.src !== this.props.coupon?.src) this.setCoupon(props.coupon)
     if (props.phase !== this.props.phase) {
-      this.screen.material.map?.dispose()
-      this.screen.material.map = this.screenTexture(props.phase)
+      this.shadowDirty = true
+      this.display.setPhase(props.phase, this.clock)
       if (props.phase === 'inserting' && this.card) {
-        this.insertTime = 0
+        this.insertStarted = performance.now()
         this.startPosition.copy(this.card.position)
         this.startRotation.copy(this.card.rotation)
         this.dragging = false
@@ -353,11 +402,17 @@ class TerminalScene {
   }
 
   private down = (event: PointerEvent) => {
-    if (this.props.disabled || event.button !== 0) return
+    if (event.button !== 0 || this.touch || this.dragging) return
     this.aim(event)
-    if (this.props.phase !== 'ready' || !this.card || !this.raycaster.intersectObject(this.card, true).length) {
-      const object = this.demoAtPointer()
-      if (object) this.props.onChooseDemo(object.userData.couponIndex as number)
+    const enabled = this.near && !this.props.disabled
+    const cardHit = enabled && this.props.phase === 'ready' && this.card
+      && this.raycaster.intersectObject(this.card, true).length
+    if (!cardHit || !this.card) {
+      const object = enabled ? this.demoAtPointer() : null
+      if (event.pointerType === 'touch') {
+        this.touch = { id: event.pointerId, start: event.clientY, last: event.clientY, moved: false, demo: object }
+        this.renderer.domElement.setPointerCapture(event.pointerId)
+      } else if (object) this.props.onChooseDemo(object.userData.couponIndex as number)
       return
     }
     if (!this.raycaster.ray.intersectPlane(this.dragPlane, this.hit)) return
@@ -372,10 +427,22 @@ class TerminalScene {
   }
 
   private move = (event: PointerEvent) => {
+    if (this.touch?.id === event.pointerId) {
+      const touch = this.touch
+      const root = this.props.scrollRoot.current
+      if (root && (touch.moved || Math.abs(touch.start - event.clientY) > 7)) {
+        touch.moved = true
+        root.scrollTop += (touch.last - event.clientY) * 1.85
+        touch.last = event.clientY
+      }
+      return
+    }
     this.aim(event)
     if (!this.dragging) {
-      this.hoveredDemo = !this.props.disabled && event.pointerType !== 'touch' ? this.demoAtPointer() : null
-      const draggable = this.props.phase === 'ready' && this.card && this.raycaster.intersectObject(this.card, true).length
+      const hovered = this.near && !this.props.disabled && event.pointerType !== 'touch' ? this.demoAtPointer() : null
+      if (hovered && hovered !== this.hoveredDemo) this.props.onHoverCoupon()
+      this.hoveredDemo = hovered
+      const draggable = this.near && this.props.phase === 'ready' && this.card && this.raycaster.intersectObject(this.card, true).length
       this.renderer.domElement.style.cursor = this.props.disabled ? 'progress' : this.hoveredDemo ? 'pointer' : draggable ? 'grab' : 'default'
       return
     }
@@ -406,6 +473,13 @@ class TerminalScene {
   private up = (event: PointerEvent) => { this.release(event, false) }
   private cancel = (event: PointerEvent) => { this.release(event, true) }
   private release(event: PointerEvent, cancelled: boolean) {
+    if (this.touch?.id === event.pointerId) {
+      const { moved, demo } = this.touch
+      this.touch = null
+      if (this.renderer.domElement.hasPointerCapture(event.pointerId)) this.renderer.domElement.releasePointerCapture(event.pointerId)
+      if (demo && !cancelled && !moved && this.near && !this.props.disabled) this.props.onChooseDemo(demo.userData.couponIndex as number)
+      return
+    }
     if (!this.dragging) return
     this.dragging = false
     const accept = this.over && !cancelled
@@ -420,16 +494,26 @@ class TerminalScene {
     const delta = this.previous ? Math.min((timestamp - this.previous) / 1000, 0.08) : 0
     this.previous = timestamp
     this.clock += delta
+    if (this.progress !== this.scrollTarget && !this.dragging) {
+      this.progress = this.props.reducedMotion || Math.abs(this.progress - this.scrollTarget) < .0008
+        ? this.scrollTarget : THREE.MathUtils.damp(this.progress, this.scrollTarget, 11, delta)
+      this.positionCamera()
+    }
+    this.meadow.update(this.camera, this.props.reducedMotion ? 0 : this.clock)
+    this.display.update(this.clock, this.props.reducedMotion)
+    if (this.keycaps.update(this.props.keypad.current?.children, this.near, delta, this.props.reducedMotion)) this.shadowDirty = true
     for (const demo of this.stack.children) {
       const lifted = this.hoveredDemo === demo && !this.props.disabled
-      const targetY = demo.userData.baseY + (lifted ? 0.16 : 0)
-      const targetX = -Math.PI / 2 + (lifted ? 0.12 : 0)
-      const targetZ = demo.userData.baseAngle + (lifted ? 0.025 : 0)
+      const targetY = lifted ? .115 : 0
+      const targetX = -Math.PI / 2 + (lifted ? .046 : 0)
+      const targetZ = demo.userData.baseAngle
+      if (Math.abs(demo.position.y - targetY) > .001) this.shadowDirty = true
       demo.position.y = this.props.reducedMotion ? targetY : THREE.MathUtils.damp(demo.position.y, targetY, 12, delta)
       demo.rotation.x = this.props.reducedMotion ? targetX : THREE.MathUtils.damp(demo.rotation.x, targetX, 12, delta)
       demo.rotation.z = this.props.reducedMotion ? targetZ : THREE.MathUtils.damp(demo.rotation.z, targetZ, 12, delta)
     }
     if (this.props.phase === 'printing') {
+      this.shadowDirty = true
       const progress = Math.min(1, (timestamp - this.printStarted) / (this.props.reducedMotion ? 450 : PRINT_DURATION))
       this.printer.feed(progress)
     }
@@ -437,9 +521,9 @@ class TerminalScene {
     const card = this.card
     if (card) {
       card.visible = this.props.phase === 'ready' || this.props.phase === 'inserting'
+      if (card.visible && (this.near || this.props.phase === 'inserting')) this.shadowDirty = true
       if (this.props.phase === 'inserting') {
-        this.insertTime += delta
-        const progress = Math.min(1, this.insertTime / (this.props.reducedMotion ? 0.35 : 1.95))
+        const progress = Math.min(1, Math.max(0, timestamp - this.insertStarted) / (this.props.reducedMotion ? 350 : 1950))
         if (progress < 0.43) {
           const t = ease(progress / 0.43)
           card.position.lerpVectors(this.startPosition, insertion, t)
@@ -461,7 +545,15 @@ class TerminalScene {
         card.rotation.z = THREE.MathUtils.damp(card.rotation.z, -0.1, 8, delta)
       }
     }
+    if (this.shadowDirty) {
+      this.renderer.shadowMap.needsUpdate = true
+      this.shadowDirty = false
+    }
     this.renderer.render(this.scene, this.camera)
+    if (!this.reportedReady) {
+      this.reportedReady = true
+      this.props.onReady()
+    }
     this.animation = requestAnimationFrame(this.frame)
   }
 
@@ -469,6 +561,7 @@ class TerminalScene {
     this.destroyed = true
     cancelAnimationFrame(this.animation)
     this.observer.disconnect()
+    this.props.scrollRoot.current?.removeEventListener('scroll', this.scroll)
     const canvas = this.renderer.domElement
     canvas.removeEventListener('pointerdown', this.down)
     canvas.removeEventListener('pointermove', this.move)
@@ -476,10 +569,15 @@ class TerminalScene {
     canvas.removeEventListener('pointercancel', this.cancel)
     canvas.removeEventListener('lostpointercapture', this.cancel)
     canvas.removeEventListener('pointerleave', this.leave)
-    disposeObject(this.scene)
-    this.scene.traverse((object) => { if (object instanceof THREE.DirectionalLight) object.shadow.dispose() })
-    this.renderer.dispose()
     canvas.remove()
+    const release = () => {
+      this.meadow.dispose()
+      disposeObject(this.scene)
+      this.scene.traverse((object) => { if (object instanceof THREE.DirectionalLight) object.shadow.dispose() })
+      this.renderer.dispose()
+    }
+    if (this.compiling) void this.compiling.then(release, release)
+    else release()
   }
 }
 
@@ -489,15 +587,33 @@ export default function MachineScene(props: SceneProps) {
   const initial = useRef(props)
   const [failed, setFailed] = useState(false)
   useEffect(() => {
-    if (!host.current) return
-    try {
-      runtime.current = new TerminalScene(host.current, initial.current)
-      return () => { runtime.current?.dispose(); runtime.current = null }
-    } catch {
-      setFailed(true)
+    const setup = requestAnimationFrame(() => {
+      if (!host.current) return
+      try {
+        const scene = new TerminalScene(host.current, initial.current)
+        runtime.current = scene
+        void scene.start().catch(() => {
+          if (runtime.current !== scene) return
+          scene.dispose()
+          runtime.current = null
+          setFailed(true)
+          initial.current.onReady(true)
+        })
+      } catch {
+        setFailed(true)
+        initial.current.onReady(true)
+      }
+    })
+    return () => {
+      cancelAnimationFrame(setup)
+      runtime.current?.dispose()
+      runtime.current = null
     }
   }, [])
-  useEffect(() => { runtime.current?.update(props) }, [props])
-  if (failed) return <div className="scene-fallback"><div className="fallback-machine"><span>cupon.</span><div>ПРИВІТ,<br />КУПОНЕ.</div><i /></div><p>3D недоступне в цьому браузері.<br />Купон можна вставити кнопкою.</p></div>
+  useEffect(() => {
+    initial.current = props
+    runtime.current?.update(props)
+  }, [props])
+  if (failed) return <div className="scene-fallback"><div className="fallback-machine"><span>cupon.</span><div>{props.phase === 'empty' ? 'ОБЕРИ КУПОН' : props.phase === 'ready' ? 'ВСТАВ КУПОН' : props.phase === 'inserting' ? 'ЗЧИТУЮ...' : props.phase === 'printing' ? 'ДРУКУЮ ЧЕК' : 'ГОТОВО :)'}</div><i /></div>{props.receipt && props.phase === 'success' && <img className="fallback-receipt" src={props.receipt.canvas.toDataURL()} alt="Надрукований чек" />}</div>
   return <div ref={host} className="canvas-host" />
 }
