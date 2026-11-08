@@ -1,12 +1,17 @@
 import { Color, MathUtils } from 'three'
 
 export const TERRAIN_EXTENT = 96
-export const TURF_GREEN = new Color('#396437')
-export const TURF_OLIVE = new Color('#88994d')
+export const MEADOW_FOG_NEAR = 44
+export const MEADOW_FOG_FAR = 174
+const TURF_GREEN = new Color('#476b24')
+const TURF_OLIVE = new Color('#a2b936')
+const TURF_SAGE = new Color('#bdc783')
+const TURF_SHADE = new Color('#345729')
 
-export function turfTone(x: number, y: number, z: number) {
-  return MathUtils.clamp(.43 + (y + 6) * .016
-    + Math.sin(x * .25 + z * .17) * .2 + Math.sin(x * .105 - z * .14) * .19, .03, .96)
+export function hillTurf(y: number, normalY: number) {
+  const elevation = MathUtils.smoothstep(y, -6.8, 4)
+  const slope = MathUtils.smoothstep(1 - normalY, .04, .30)
+  return 1 - (1 - elevation) * (1 - slope)
 }
 
 const HILLS = [
@@ -65,10 +70,10 @@ export const FLOWER_DRIFTS = [
   { x: -37, z: -51, width: 14, depth: 4.8, angle: .57, species: 2 },
 ].map(drift => ({ ...drift, cos: Math.cos(drift.angle), sin: Math.sin(drift.angle) }))
 
-export const FLOWER_TINTS = [
-  new Color('#7b5598'),
-  new Color('#a0668a'),
-  new Color('#a88cba'),
+const FLOWER_TINTS = [
+  new Color('#8064a0'),
+  new Color('#a97e9d'),
+  new Color('#a796b5'),
 ]
 
 export function flowerDrift(drift: typeof FLOWER_DRIFTS[number], x: number, z: number) {
@@ -78,6 +83,20 @@ export function flowerDrift(drift: typeof FLOWER_DRIFTS[number], x: number, z: n
   const edge = Math.hypot(u, v + Math.sin(u * 5 + drift.x) * .21)
   const openings = Math.sin(x * 1.83 + z * .61) * Math.cos(z * 1.46 - x * .55)
   return (1 - MathUtils.smoothstep(edge, .28, 1.04)) * (.75 + openings * .25)
+}
+
+export function meadowTurfColor(color: Color, x: number, z: number) {
+  const tone = .53 + Math.sin(x * .25 + z * .17) * .12 + Math.sin(x * .105 - z * .14) * .14
+  const patches = Math.sin(x * .46 + z * .29 + Math.sin(z * .57)) * Math.cos(z * .63 - x * .35)
+    + .24 * Math.sin(x * 1.09 + z * .91)
+  color.copy(TURF_GREEN).lerp(TURF_OLIVE, tone)
+    .lerp(TURF_SAGE, MathUtils.smoothstep(patches, .08, .84) * .52)
+    .lerp(TURF_SHADE, MathUtils.smoothstep(-patches, .21, .91) * .36)
+  for (const drift of FLOWER_DRIFTS) {
+    const bloom = flowerDrift(drift, x, z)
+    if (bloom > 0) color.lerp(FLOWER_TINTS[drift.species], bloom * .49)
+  }
+  return color
 }
 
 export function meadowRandom(seed: number) {

@@ -1,8 +1,10 @@
-interface IconProps { name: 'upload' | 'ticket' | 'sound' | 'muted' | 'download' | 'again' | 'insert' | 'down'; size?: number }
+interface IconProps { name: 'upload' | 'ticket' | 'sound' | 'muted' | 'download' | 'again' | 'insert' | 'mouse' | 'left' | 'right'; size?: number }
 
 export function Icon({ name, size = 20 }: IconProps) {
   const paths = {
-    down: <path d="M12 4v15m-6-6 6 6 6-6" />,
+    mouse: <><rect x="6" y="2.5" width="12" height="19" rx="6" /><path className="mouse-wheel" d="M12 6v4" /></>,
+    left: <path d="M20 12H4m6-6-6 6 6 6" />,
+    right: <path d="M4 12h16m-6-6 6 6-6 6" />,
     insert: <path d="M12 3v11m-4-4 4 4 4-4M4 16h16v5H4z" />,
     upload: <><path d="M12 16V4m-4 4 4-4 4 4M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" /></>,
     ticket: <><path d="M4 5h16v5a2 2 0 0 0 0 4v5H4v-5a2 2 0 0 0 0-4V5Z" /><path d="M15 5v2m0 3v2m0 3v2m0 1v1" /></>,

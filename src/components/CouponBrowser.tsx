@@ -1,33 +1,44 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react'
-import { DEMO_COUPONS } from '../coupons/coupon'
+import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
+import { DEMO_COUPONS, downloadCoupon } from '../coupons/coupon'
+import { Icon } from './Icons'
 import './experience.css'
 
 interface CouponBrowserProps {
-  open: boolean
+  fallback: boolean
+  rackControls: RefObject<HTMLDivElement | null>
   activeIndex: number
   onActiveIndex: (index: number) => void
   onChoose: (index: number) => void
   onClose: () => void
 }
 
-export function CouponBrowser({ open, activeIndex, onActiveIndex, onChoose, onClose }: CouponBrowserProps) {
+export function CouponBrowser({ fallback, rackControls, activeIndex, onActiveIndex, onChoose, onClose }: CouponBrowserProps) {
   const panel = useRef<HTMLElement>(null)
-  const closeButton = useRef<HTMLButtonElement>(null)
+  const previousButton = useRef<HTMLButtonElement>(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState('')
   const safeIndex = Math.max(0, Math.min(activeIndex, DEMO_COUPONS.length - 1))
   const coupon = DEMO_COUPONS[safeIndex]
 
   useEffect(() => {
-    if (!open) return
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const frame = requestAnimationFrame(() => closeButton.current?.focus())
+    const frame = requestAnimationFrame(() => previousButton.current?.focus({ preventScroll: true }))
     return () => {
       cancelAnimationFrame(frame)
       if (previous?.isConnected) requestAnimationFrame(() => previous.focus())
     }
-  }, [open])
+  }, [])
 
   function step(direction: number) {
     onActiveIndex((safeIndex + direction + DEMO_COUPONS.length) % DEMO_COUPONS.length)
+  }
+
+  async function saveCoupon() {
+    setDownloadError('')
+    setDownloading(true)
+    try { await downloadCoupon(coupon) }
+    catch (cause) { setDownloadError(cause instanceof Error ? cause.message : 'Не вдалося завантажити купон.') }
+    finally { setDownloading(false) }
   }
 
   function keyDown(event: KeyboardEvent<HTMLElement>) {
@@ -54,26 +65,19 @@ export function CouponBrowser({ open, activeIndex, onActiveIndex, onChoose, onCl
     }
   }
 
-  if (!open) return null
-  return <div className="coupon-browser-layer">
-    <section ref={panel} className="coupon-browser" role="dialog" aria-modal="true"
-      aria-label="Готові купони" onKeyDown={keyDown}>
-      <button ref={closeButton} type="button" className="experience-icon-button coupon-browser__close"
-        onClick={onClose} aria-label="Закрити вибір купонів" title="До столу">
-        <span aria-hidden="true">×</span>
-      </button>
-      <div className="coupon-browser__copy" aria-live="polite" aria-atomic="true">
-        <p className="coupon-browser__meta">№ {String(safeIndex + 1).padStart(2, '0')} · {coupon.category}</p>
-        <h3>{coupon.title ?? coupon.name}</h3>
-        <p>{coupon.description}</p>
-      </div>
-      <div className="coupon-browser__actions">
-        <div className="coupon-browser__paging">
-          <button type="button" className="experience-icon-button" onClick={() => step(-1)} aria-label="Попередній купон">←</button>
-          <button type="button" className="experience-icon-button" onClick={() => step(1)} aria-label="Наступний купон">→</button>
-        </div>
-        <button type="button" className="coupon-browser__choose" onClick={() => onChoose(safeIndex)}>Беру цей</button>
-      </div>
-    </section>
-  </div>
+  return <section ref={panel} className="coupon-browser-layer" role="dialog" aria-modal="true"
+    aria-label="Готові купони" onKeyDown={keyDown}>
+    <div ref={rackControls} className="coupon-rack-actions" data-fallback={fallback} role="group" aria-label="Керування стосом">
+      <button ref={previousButton} type="button" onClick={() => step(-1)} aria-label="Попередній купон" title="Попередній купон"><Icon name="left" size={21} /></button>
+      <button type="button" onClick={() => step(1)} aria-label="Наступний купон" title="Наступний купон"><Icon name="right" size={21} /></button>
+      <button type="button" onClick={() => void saveCoupon()} disabled={downloading} aria-label="Завантажити купон як PNG" title="Завантажити PNG"><Icon name="download" size={21} /></button>
+    </div>
+    <button type="button" className={fallback ? 'fallback-catalog-preview' : 'catalog-keyboard-action'}
+      aria-label={`Взяти купон «${coupon.title ?? coupon.name}»`} onClick={() => onChoose(safeIndex)}>
+      {fallback ? <img src={coupon.src} alt="" /> : 'Взяти купон'}
+    </button>
+    <button type="button" className="catalog-keyboard-action" onClick={onClose}>До столу</button>
+    <span className="sr-only" role="status">{coupon.title ?? coupon.name}</span>
+    {downloadError && <p className="catalog-error" role="alert">{downloadError}</p>}
+  </section>
 }

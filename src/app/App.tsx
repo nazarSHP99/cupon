@@ -8,6 +8,7 @@ import { useCouponHistory } from '../hooks/useCouponHistory'
 import { CouponBrowser } from '../components/CouponBrowser'
 import { JourneyNav } from '../components/JourneyNav'
 import { CustomCursor } from '../components/CustomCursor'
+import { InstructionReader } from '../components/InstructionReader'
 import '../components/experience.css'
 import type { DragHint, Phase } from '../scene/MachineScene'
 
@@ -56,10 +57,14 @@ export default function App() {
   const [near, setNear] = useState(false)
   const [journeyProgress, setJourneyProgress] = useState(0)
   const [browserOpen, setBrowserOpen] = useState(false)
+  const [instructionOpen, setInstructionOpen] = useState(false)
   const [activeCoupon, setActiveCoupon] = useState(0)
   const { entries, saveUsage, storageError } = useCouponHistory()
   const scrollRoot = useRef<HTMLDivElement>(null)
   const keypad = useRef<HTMLDivElement>(null)
+  const rackControls = useRef<HTMLDivElement>(null)
+  const objectHint = useRef<HTMLDivElement>(null)
+  const instructionButton = useRef<HTMLButtonElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const uploadButton = useRef<HTMLButtonElement>(null)
   const request = useRef(0)
@@ -70,7 +75,7 @@ export default function App() {
   const hoverCoupon = useCallback(() => play('paper'), [play])
   const busy = phase === 'inserting' || phase === 'printing'
   const locked = busy || loading || saving
-  const controlsActive = booted && (near || fallback) && !browserOpen && journeyProgress < .67
+  const controlsActive = booted && (near || fallback) && !browserOpen && !instructionOpen && journeyProgress < .67
 
   const sceneReady = useCallback((webglUnavailable = false) => {
     setFallback(webglUnavailable)
@@ -204,7 +209,7 @@ export default function App() {
     : coupon ? 'Усе готово. Можна вставляти.' : 'Автомат готовий до приємного'
 
   function navigate(checkpoint: 0 | 1 | 2) {
-    if (locked || browserOpen) return
+    if (locked || browserOpen || instructionOpen) return
     const root = scrollRoot.current
     if (fallback) {
       setJourneyProgress(checkpoint / 2)
@@ -214,13 +219,18 @@ export default function App() {
   }
 
   function openLibrary() {
-    if (locked) return
+    if (locked || instructionOpen) return
     setActiveCoupon(0)
     setBrowserOpen(true)
   }
 
   function closeLibrary() {
     setBrowserOpen(false)
+  }
+
+  function closeInstructions() {
+    setInstructionOpen(false)
+    requestAnimationFrame(() => instructionButton.current?.focus({ preventScroll: true }))
   }
 
   function toggleSound() {
@@ -231,14 +241,14 @@ export default function App() {
   return <>
     <div ref={scrollRoot} className={`app-shell phase-${phase}`} data-near={near} data-fallback={fallback}
       data-checkpoint={journeyProgress > .78 ? 'drawer' : journeyProgress > .4 ? 'table' : 'overview'}
-      style={{ overflowY: browserOpen || locked ? 'hidden' : 'auto' }}
+      style={{ overflowY: browserOpen || instructionOpen || locked ? 'hidden' : 'auto' }}
       onScroll={event => {
         const root = event.currentTarget
         setJourneyProgress(root.scrollTop / Math.max(1, root.scrollHeight - root.clientHeight))
       }}
       tabIndex={0} aria-label="Купон на пагорбі" inert={!booted}>
       <main className="tabletop" aria-label="Купоноприймач і принтер чеків на дерев’яному столі"
-        onClick={fallback && browserOpen ? closeLibrary : undefined}
+        onClick={fallback ? browserOpen ? closeLibrary : instructionOpen ? closeInstructions : undefined : undefined}
         onDragOver={event => {
           if (!event.dataTransfer.types.includes('Files')) return
           event.preventDefault()
@@ -255,6 +265,8 @@ export default function App() {
               onInsert={insert} onDragHint={setDragHint} dragHint={dragHint} onChooseDemo={demo} onHoverCoupon={hoverCoupon} disabled={locked}
               browserOpen={browserOpen} activeCoupon={activeCoupon} onBrowse={openLibrary} onCloseBrowse={closeLibrary}
               onPreviewCoupon={setActiveCoupon} usedCoupons={entries}
+              rackControls={rackControls} objectHint={objectHint} instructionButton={instructionButton} instructionOpen={instructionOpen}
+              onCloseInstructions={closeInstructions}
               scrollRoot={scrollRoot} keypad={keypad} onReady={sceneReady} onApproach={setNear} />
           </Suspense>
         </div>
@@ -291,28 +303,24 @@ export default function App() {
           </button>
         </div>
 
+        <button ref={instructionButton} className="instruction-hotspot" type="button" hidden={!controlsActive}
+          disabled={locked} aria-label="Прочитати інструкцію" onClick={event => {
+            event.stopPropagation()
+            setInstructionOpen(true)
+          }}>{fallback && 'Як це працює'}</button>
         {!fallback && journeyProgress < .43 && <button className="approach-cue" onClick={() => navigate(1)} aria-label="Наблизитися до столу">
-          <span>Прокрути, щоб наблизитися</span><Icon name="down" size={17} />
+          <Icon name="mouse" size={26} /><span>Прокрути, щоб наблизитися</span>
         </button>}
-        {journeyProgress > .8 && <aside className="drawer-history" aria-label="Історія використаних купонів">
-          <h2>Використані купони <span>{entries.length}</span></h2>
-          {entries.length === 0 ? <p>Тут з’являться купони, які ти активуєш за цим столом.</p> :
-            <details><summary>Переглянути використані купони</summary>
-              <ol>{entries.map(entry => <li key={entry.id}>
-                <img src={entry.src} alt="" /><div><strong>{entry.title}</strong>
-                  <time dateTime={entry.usedAt}>{new Date(entry.usedAt).toLocaleDateString('uk-UA')}</time></div>
-              </li>)}</ol>
-            </details>}
-          <p className="drawer-storage">Збережено в цьому браузері на цьому пристрої.</p>
-        </aside>}
+        <div ref={objectHint} className="scene-object-hint" aria-hidden="true" />
         {(error || saveError || storageError) && <p className="scene-error" role="alert">{error || saveError || storageError}</p>}
         <p className="sr-only" role="status" aria-live="polite">{statusText}</p>
       </main>
       {!fallback && <div className="scroll-runway" aria-hidden="true" />}
     </div>
-    <JourneyNav progress={journeyProgress} onNavigate={navigate} disabled={locked || browserOpen || !booted} />
-    {fallback && browserOpen && <img className="fallback-catalog-preview" src={DEMO_COUPONS[activeCoupon].src} alt={DEMO_COUPONS[activeCoupon].title} />}
-    <CouponBrowser open={browserOpen} activeIndex={activeCoupon} onActiveIndex={setActiveCoupon} onChoose={demo} onClose={closeLibrary} />
+    <JourneyNav progress={journeyProgress} onNavigate={navigate} disabled={locked || browserOpen || instructionOpen || !booted} />
+    {browserOpen && <CouponBrowser fallback={fallback} rackControls={rackControls} activeIndex={activeCoupon}
+      onActiveIndex={setActiveCoupon} onChoose={demo} onClose={closeLibrary} />}
+    {instructionOpen && <InstructionReader fallback={fallback} onClose={closeInstructions} />}
     <CustomCursor />
     <BootMachine ready={booted} />
   </>

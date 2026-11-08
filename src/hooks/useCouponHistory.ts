@@ -8,9 +8,10 @@ export interface UsedCoupon {
   src: string
   aspect: number
   usedAt: string
+  demo: boolean
 }
 
-type SavedCoupon = Omit<UsedCoupon, 'src'> & {
+type SavedCoupon = Omit<UsedCoupon, 'src' | 'demo'> & {
   version: 1
   src?: string
   demoId?: string
@@ -42,7 +43,7 @@ function decodeRecord(raw: string | null): UsedCoupon | null {
   const demo = DEMO_COUPONS.find(coupon => coupon.id === entry.demoId)
   const src = demo?.src ?? entry.src ?? (typeof entry.demoId === 'string' ? archivedArtwork(entry.title) : undefined)
   if (typeof src !== 'string' || !/^data:image\/(jpeg|png|webp|svg\+xml)[;,]/i.test(src)) return null
-  return { id: entry.id, title: entry.title, src, aspect: entry.aspect, usedAt: new Date(entry.usedAt).toISOString() }
+  return { id: entry.id, title: entry.title, src, aspect: entry.aspect, demo: !!demo, usedAt: new Date(entry.usedAt).toISOString() }
 }
 
 function readHistory() {
@@ -81,10 +82,8 @@ async function thumbnail(coupon: Coupon) {
   canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
   const context = canvas.getContext('2d')
   if (!context) throw new Error('Canvas unavailable')
-  context.fillStyle = '#fffaf0'
-  context.fillRect(0, 0, canvas.width, canvas.height)
   context.drawImage(image, 0, 0, canvas.width, canvas.height)
-  return canvas.toDataURL('image/jpeg', .78)
+  return canvas.toDataURL('image/webp', .84)
 }
 
 export function useCouponHistory() {
@@ -119,6 +118,7 @@ export function useCouponHistory() {
       title: couponTitle(coupon),
       src: coupon.src,
       aspect: coupon.aspect,
+      demo: coupon.demo,
       usedAt: receipt.activatedAt.toISOString(),
     }
     pending.current.set(entry.id, entry)

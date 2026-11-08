@@ -21,6 +21,7 @@ export function JourneyNav({ progress, onNavigate, disabled = false }: JourneyNa
   const offset = -(edgeTicks + .5 + value * routeLength) / tickCount * 100
   return <nav className="journey-nav" aria-label="Точки прогулянки"
     style={{ '--ruler-tick-count': tickCount, '--ruler-offset': `${offset}%` } as CSSProperties}>
+    <span className="journey-nav__pointer" aria-hidden="true" />
     <div className="journey-nav__track">
       {ticks.map(tick => {
         if (tick < 0 || tick > routeLength || tick % ticksPerSection !== 0) {

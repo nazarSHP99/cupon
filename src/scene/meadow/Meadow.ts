@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { GrassField, grassGroundMaterial, meadowGroundTexture } from './GrassField'
-import { FLOWER_DRIFTS, FLOWER_TINTS, TURF_GREEN, TURF_OLIVE, flowerDrift, terrainHeight, turfTone, TERRAIN_EXTENT } from './terrain'
+import { meadowTurfColor, terrainHeight, TERRAIN_EXTENT } from './terrain'
 import { wildflowers } from './Wildflowers'
 
 const sun = new THREE.Vector3(-15, 12, 8).normalize()
@@ -95,12 +95,7 @@ export class Meadow extends THREE.Group {
       const x = vertices.getX(i), z = vertices.getZ(i)
       const y = terrainHeight(x, z)
       vertices.setY(i, y)
-      color.copy(TURF_GREEN).lerp(TURF_OLIVE, turfTone(x, y, z))
-      for (const drift of FLOWER_DRIFTS) {
-        const bloom = flowerDrift(drift, x, z)
-        if (bloom > 0) color.lerp(FLOWER_TINTS[drift.species], bloom * .5)
-      }
-      color.toArray(colors, i * 3)
+      meadowTurfColor(color, x, z).toArray(colors, i * 3)
       if (i % 1024 === 0 && performance.now() > deadline) {
         await timeSlice()
         if (cancelled()) { ground.dispose(); map.dispose(); return }

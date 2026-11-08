@@ -5,14 +5,23 @@
   left: 50%;
   translate: -50% 0;
   width: min(389px, calc(100% - 28px));
-  height: 55px;
+  height: 60px;
   overflow: clip;
   mask-image: linear-gradient(to right, transparent, #000 17%, #000 83%, transparent);
   color: #fffcf4;
   pointer-events: none;
 }
+.journey-nav__pointer {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  border-inline: 4px solid transparent;
+  border-top: 5px solid #fff;
+}
 .journey-nav__track {
   position: absolute;
+  top: 6px;
   left: 50%;
   width: calc(var(--ruler-tick-count) * 7%);
   transform: translateX(var(--ruler-offset));
@@ -50,7 +59,7 @@
   letter-spacing: .045em;
   white-space: nowrap;
 }
-.journey-nav button:focus-visible, .coupon-browser button:focus-visible {
+.journey-nav button:focus-visible, .coupon-browser-layer button:focus-visible {
   outline: 2px solid #7957a2;
   outline-offset: 2px;
 }
@@ -60,53 +69,141 @@
   z-index: 4;
   inset: 0;
   pointer-events: none;
-  display: flex;
-  align-items: flex-end;
-  padding: 14px max(14px, env(safe-area-inset-left)) max(14px, env(safe-area-inset-bottom));
 }
-.coupon-browser {
-  position: relative;
-  width: min(312px, 100%);
-  pointer-events: auto;
-  padding: 12px;
-  border: 1px solid #fffbed9c;
-  border-radius: 12px;
-  background: #f7f9ec8c;
-  color: #20291c;
-  backdrop-filter: blur(30px) saturate(1.4);
-  animation: coupon-panel-in .2s ease both;
+.coupon-rack-actions {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  width: 146px;
+  height: 42px;
+  visibility: hidden;
+  transform-origin: 0 0;
 }
-.experience-icon-button {
+.coupon-rack-actions[style], .coupon-rack-actions[data-fallback='true'] { visibility: visible; }
+.coupon-rack-actions button {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  border: 1px solid #43513c26;
-  border-radius: 7px;
-  background: #fff9eb42;
-  font-size: 17px;
-  line-height: 1;
+  padding: 0;
+  border: 1px solid #ebeed8ad;
+  border-radius: 11px;
+  background: #344335e8;
+  color: #fff8e7;
+  pointer-events: auto;
+  touch-action: manipulation;
 }
-.experience-icon-button:hover { background: #fff9eb9c; }
-.coupon-browser__close { position: absolute; top: 8px; right: 8px; }
-.coupon-browser__copy { padding-right: 36px; }
-.coupon-browser__copy h3 { margin: 0; font-size: 15px; line-height: 1.2; }
-.coupon-browser__copy p { margin: 4px 0 0; font-size: 12px; line-height: 1.35; }
-.coupon-browser__copy .coupon-browser__meta { margin: 0 0 5px; font: 700 11px/1.2 monospace; }
-.coupon-browser__actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
-.coupon-browser__paging { display: flex; gap: 6px; }
-.coupon-browser__choose {
-  min-height: 34px;
-  padding: 0 13px;
-  border-radius: 7px;
-  background: #c84a2e;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
+.coupon-rack-actions button:hover { background: #51614a; }
+.coupon-rack-actions button:active { background: #28372b; }
+.coupon-rack-actions button:disabled { opacity: .6; }
+.coupon-rack-actions[data-fallback='true'] {
+  inset: auto auto max(14px, env(safe-area-inset-bottom)) 50%;
+  translate: -50% 0;
+  height: 44px;
 }
-.coupon-browser__choose:hover { background: #b43d23; }
-@keyframes coupon-panel-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+.catalog-keyboard-action, .catalog-error {
+  position: absolute;
+  left: 50%;
+  bottom: max(64px, env(safe-area-inset-bottom));
+  translate: -50% 0;
+  padding: 8px 12px;
+  border-radius: 7px;
+  background: #f7ead0;
+  color: #342e24;
+  font-size: 13px;
+}
+.catalog-keyboard-action:not(:focus-visible) { clip-path: inset(50%); }
+.catalog-keyboard-action:focus-visible { pointer-events: auto; }
+.catalog-error { margin: 0; max-width: calc(100% - 24px); }
+
+.scene-object-hint {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  top: 0;
+  translate: -50% calc(-100% - 9px);
+  padding: 7px 11px;
+  border: 1px solid #ece7caa1;
+  border-radius: 8px;
+  background: #253529ed;
+  color: #fff9e9;
+  font: 600 12px/1.2 Arial, sans-serif;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+.scene-object-hint::after {
+  content: '';
+  position: absolute;
+  left: calc(50% - 4px);
+  top: calc(100% - 3px);
+  width: 7px;
+  height: 7px;
+  rotate: 45deg;
+  background: #253529;
+  border-right: 1px solid #ece7caa1;
+  border-bottom: 1px solid #ece7caa1;
+}
+.scene-object-hint[data-visible='true'] { opacity: 1; }
+
+.instruction-hotspot {
+  position: absolute;
+  z-index: 1;
+  inset: 0 auto auto 0;
+  width: 176px;
+  height: 214px;
+  background: transparent;
+  border-radius: 4px;
+  transform-origin: 0 0;
+  visibility: hidden;
+}
+.instruction-hotspot[style] { visibility: visible; }
+.app-shell[data-fallback='true'] .instruction-hotspot {
+  inset: 18% auto auto 50%;
+  translate: -50% 0;
+  width: max-content;
+  height: auto;
+  padding: 8px 12px;
+  visibility: visible;
+  background: #f7ead0;
+}
+.instruction-reader {
+  position: fixed;
+  z-index: 4;
+  inset: 0;
+  pointer-events: none;
+}
+.instruction-reader__close {
+  position: absolute;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  left: 50%;
+  translate: -50% 0;
+  min-height: 35px;
+  padding: 0 12px;
+  border: 1px solid #d2be94;
+  border-radius: 6px;
+  background: #f7ead0;
+  color: #342e24;
+  font-size: 13px;
+  pointer-events: auto;
+}
+.instruction-reader__paper {
+  position: absolute;
+  inset: 16% 0 auto;
+  width: min(440px, calc(100% - 32px));
+  max-height: 72%;
+  margin: auto;
+  overflow: auto;
+  padding: 18px 25px;
+  border: 1px solid #ba9d73;
+  background: #f7ead0;
+  color: #342e24;
+  pointer-events: auto;
+}
+.instruction-reader__paper p { margin: 4px 0 10px; }
 
 .meadow-cursor { position: fixed; z-index: 20; left: 0; top: 0; width: 0; height: 0; pointer-events: none; opacity: 0; }
 .meadow-cursor[data-visible="true"] { opacity: 1; }
@@ -118,5 +215,5 @@
   html.cupon-cursor, html.cupon-cursor * { cursor: none !important; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .coupon-browser, .coupon-browser *, .journey-nav *, .meadow-cursor::before { animation: none; transition: none; }
+  .journey-nav *, .meadow-cursor::before { animation: none; transition: none; }
 }

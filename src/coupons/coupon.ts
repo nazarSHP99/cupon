@@ -1,4 +1,5 @@
 import { BASE_COUPONS } from './catalog'
+import { downloadPng } from './downloadPng'
 
 export interface Coupon {
   src: string
@@ -15,6 +16,18 @@ export const DEMO_COUPONS: Coupon[] = BASE_COUPONS
 export const DEMO_COUPON = DEMO_COUPONS[0]
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
+
+export async function downloadCoupon(coupon: Coupon) {
+  const image = await loadImage(coupon.src)
+  const canvas = document.createElement('canvas')
+  canvas.width = image.naturalWidth
+  canvas.height = image.naturalHeight
+  const context = canvas.getContext('2d')
+  const message = 'Не вдалося зберегти купон. Спробуй ще раз.'
+  if (!context) throw new Error(message)
+  context.drawImage(image, 0, 0)
+  await downloadPng(canvas, `cupon-${coupon.id ?? coupon.name.replace(/\.[^.]+$/, '')}.png`, message)
+}
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {

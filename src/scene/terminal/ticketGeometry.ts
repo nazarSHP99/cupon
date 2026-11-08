@@ -23,13 +23,17 @@ export function ticketGeometry(width: number, thickness: number) {
   shape.absarc(-right + corner, top - corner, corner, halfTurn, quarterTurn, true)
   shape.closePath()
 
-  const face = new THREE.ShapeGeometry(shape, 12)
+  return extrudedTicketGeometry(shape, width, height, thickness)
+}
+
+export function extrudedTicketGeometry(shapes: THREE.Shape | THREE.Shape[], width: number, height: number, thickness: number) {
+  const face = new THREE.ShapeGeometry(shapes, 12)
   const positions = face.getAttribute('position')
   const uv = face.getAttribute('uv')
   for (let index = 0; index < uv.count; index++) {
     uv.setXY(index, positions.getX(index) / width + .5, positions.getY(index) / height + .5)
   }
-  const paper = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false, curveSegments: 12 })
+  const paper = new THREE.ExtrudeGeometry(shapes, { depth: thickness, bevelEnabled: false, curveSegments: 12 })
   paper.translate(0, 0, -thickness / 2)
   return { paper, face, faceZ: thickness / 2 + .001 }
 }

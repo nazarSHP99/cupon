@@ -1,4 +1,5 @@
 import type { Coupon } from './coupon'
+import { downloadPng } from './downloadPng'
 
 export const FEED_DURATION = 2300
 export const PRINT_DURATION = 3100
@@ -133,15 +134,5 @@ export async function createReceipt(coupon: Coupon): Promise<Receipt> {
 }
 
 export async function downloadReceipt(receipt: Receipt) {
-  const blob = await new Promise<Blob>((resolve, reject) => {
-    receipt.canvas.toBlob(value => value ? resolve(value) : reject(new Error('Не вдалося зберегти чек. Спробуй ще раз.')), 'image/png')
-  })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `cupon-${receipt.id.toLowerCase()}.png`
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  await downloadPng(receipt.canvas, `cupon-${receipt.id.toLowerCase()}.png`, 'Не вдалося зберегти чек. Спробуй ще раз.')
 }

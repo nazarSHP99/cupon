@@ -95,16 +95,15 @@ export class CouponBox extends THREE.Group {
     return (index - (DEMO_COUPONS.length - 1) / 2) * SLOT_SPACING
   }
 
-  update(focus: number, activeIndex: number, hovered: boolean, delta: number, reduced: boolean) {
-    const previewVisible = focus > .01
-    let changed = this.preview.visible !== previewVisible
-    this.preview.visible = previewVisible
+  update(open: boolean, focus: number, activeIndex: number, hovered: boolean, delta: number, reduced: boolean) {
+    let changed = this.preview.visible !== open
+    this.preview.visible = open
     this.previewFace.material = this.faces[activeIndex]
     const blend = reduced ? 1 : 1 - Math.exp(-12 * delta)
     const glow = hovered || focus > .1 ? .48 : .06
     this.rim.emissiveIntensity = THREE.MathUtils.lerp(this.rim.emissiveIntensity, glow, blend)
     this.cards.forEach((card, index) => {
-      const lift = index === activeIndex ? .09 * focus : 0
+      const lift = open && index === activeIndex ? .09 * focus : 0
       const targetY = CARD_CENTER_Y + lift
       if (Math.abs(card.position.y - targetY) > .001) changed = true
       card.position.y = THREE.MathUtils.lerp(card.position.y, targetY, blend)
@@ -120,6 +119,10 @@ export class CouponBox extends THREE.Group {
 
   isPreviewAtPointer(raycaster: THREE.Raycaster) {
     return this.preview.visible && raycaster.intersectObject(this.previewFace, false).length > 0
+  }
+
+  previewHintPosition(point: THREE.Vector3) {
+    return this.preview.localToWorld(point.set(0, CARD_HEIGHT / 2, .025))
   }
 
   rackHit(raycaster: THREE.Raycaster) {

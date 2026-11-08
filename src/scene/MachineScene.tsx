@@ -4,8 +4,8 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import type { Coupon } from '../coupons/coupon'
 import { PRINT_DURATION, type Receipt } from '../coupons/receipt'
 import { getSceneLayout, sceneCamera } from './sceneLayout'
-import { CouponBox } from './terminal/CouponBox'
-import { ticketGeometry } from './terminal/ticketGeometry'
+import { COUPON_BOX_DEPTH, CouponBox } from './terminal/CouponBox'
+import { couponPaper } from './terminal/couponPaper'
 import { UsedCouponDrawer } from './terminal/UsedCouponDrawer'
 import type { UsedCoupon } from '../hooks/useCouponHistory'
 import { ReceiptPrinter } from './terminal/ReceiptPrinter'
@@ -13,6 +13,9 @@ import { LedDisplay } from './terminal/LedDisplay'
 import { woodenTable } from './terminal/woodenTable'
 import { Keycaps, KEY_TOP } from './terminal/Keycaps'
 import { Meadow } from './meadow/Meadow'
+import { MEADOW_FOG_FAR, MEADOW_FOG_NEAR } from './meadow/terrain'
+import { INSTRUCTION_DEPTH, INSTRUCTION_WIDTH, instructionCard } from './terminal/InstructionCard'
+import { canvasTexture } from './terminal/canvasTexture'
 
 export type Phase = 'empty' | 'ready' | 'inserting' | 'printing' | 'success'
 export type DragHint = 'idle' | 'dragging' | 'over'
@@ -34,6 +37,11 @@ interface SceneProps {
   onHoverCoupon: () => void
   scrollRoot: RefObject<HTMLDivElement | null>
   keypad: RefObject<HTMLDivElement | null>
+  rackControls: RefObject<HTMLDivElement | null>
+  objectHint: RefObject<HTMLDivElement | null>
+  instructionButton: RefObject<HTMLButtonElement | null>
+  instructionOpen: boolean
+  onCloseInstructions: () => void
   onReady: (fallback?: boolean) => void
   onApproach: (near: boolean) => void
   disabled: boolean
@@ -51,15 +59,27 @@ const keypadPlane = new THREE.Matrix4().set(
   0, 0, 0, 1,
 )
 
-function texture(width: number, height: number, draw: (context: CanvasRenderingContext2D) => void) {
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  draw(canvas.getContext('2d')!)
-  const result = new THREE.CanvasTexture(canvas)
-  result.colorSpace = THREE.SRGBColorSpace
-  result.anisotropy = 4
-  return result
+const instructionPlane = new THREE.Matrix4().set(
+  INSTRUCTION_WIDTH / 176, 0, 0, -INSTRUCTION_WIDTH / 2,
+  0, 0, 1, .03,
+  0, INSTRUCTION_DEPTH / 214, 0, -INSTRUCTION_DEPTH / 2,
+  0, 0, 0, 1,
+)
+
+function keypadBase() {
+  const side = new THREE.Shape()
+  side.moveTo(-.87, .006)
+  side.lineTo(.67, .006)
+  side.lineTo(.67, .08)
+  side.lineTo(-.87, .71)
+  side.closePath()
+  const base = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(side, { depth: 2.69, bevelEnabled: false }).rotateY(-Math.PI / 2).translate(1.345, 0, 0),
+    new THREE.MeshStandardMaterial({ color: '#a9aaa1', roughness: .64 }),
+  )
+  base.castShadow = true
+  base.receiveShadow = true
+  return base
 }
 
 function box(group: THREE.Group, size: [number, number, number], position: [number, number, number], color: string, radius = 0.08, metalness = 0) {
@@ -108,11 +128,17 @@ class TerminalScene {
   private stack: CouponBox
   private drawer = new UsedCouponDrawer()
   private browserFocus = 0
+  private instructionFocus = 0
+  private instructions = new THREE.Group()
+  private instructionPaper = instructionCard()
   private keypad = new THREE.Group()
+  private keypadBase = keypadBase()
   private keycaps = new Keycaps()
   private printer = new ReceiptPrinter()
   private cable = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial({ color: '#4c594a', roughness: 0.7 }))
   private hoveredDemo: THREE.Object3D | null = null
+  private previewHovered = false
+  private hintPoint = new THREE.Vector3()
   private printStarted = 0
   private contact: THREE.Mesh
   private card: THREE.Group | null = null
@@ -128,6 +154,7 @@ class TerminalScene {
   private targetView = new THREE.Vector3()
   private projection = new THREE.Matrix4()
   private viewport = new THREE.Matrix4()
+  private rackPlane = new THREE.Matrix4()
   private touch: { id: number; start: number; last: number; moved: boolean; demo: THREE.Object3D | null } | null = null
   private light: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>
   private observer: ResizeObserver
@@ -160,7 +187,7 @@ class TerminalScene {
     this.renderer.domElement.setAttribute('role', 'img')
     this.host.appendChild(this.renderer.domElement)
     this.meadow = new Meadow(host.clientWidth < 760)
-    this.scene.fog = new THREE.Fog('#c6b6c9', 37, 147)
+    this.scene.fog = new THREE.Fog('#c6b6c9', MEADOW_FOG_NEAR, MEADOW_FOG_FAR)
     this.scene.add(this.meadow)
     this.scene.add(new THREE.HemisphereLight('#e9e3fa', '#9b9d78', 1.55))
     const key = new THREE.DirectionalLight('#ffe5ba', 2.2)
@@ -203,7 +230,7 @@ class TerminalScene {
       arrow.position.set(x, -0.51, 0.656)
       this.machine.add(arrow)
     }
-    const label = texture(1024, 380, (context) => {
+    const label = canvasTexture(1024, 380, (context) => {
       context.fillStyle = '#536258'
       context.textAlign = 'center'
       context.font = 'bold 108px Arial, sans-serif'
@@ -233,12 +260,13 @@ class TerminalScene {
     this.assets = new Promise<void>(resolve => { manager.onLoad = resolve })
     this.stack = new CouponBox(manager)
     this.drawer.setEntries(props.usedCoupons)
-    this.scene.add(woodenTable(), this.stack, this.drawer, this.keypad)
+    this.instructions.add(this.instructionPaper)
+    this.scene.add(woodenTable(), this.stack, this.drawer, this.keypad, this.keypadBase, this.instructions)
     this.keypad.rotation.x = -1.08
     box(this.keypad, [2.83, 1.72, .235], [0, 0, -.102], '#b9bdba', .11)
     box(this.keypad, [2.74, 1.63, .08], [0, 0, -.018], '#d5d7d3', .073)
     this.keypad.add(this.keycaps)
-    const shadow = texture(256, 256, (context) => {
+    const shadow = canvasTexture(256, 256, (context) => {
       const gradient = context.createRadialGradient(128, 128, 15, 128, 128, 128)
       gradient.addColorStop(0, 'rgba(49,55,34,0.3)')
       gradient.addColorStop(0.45, 'rgba(49,55,34,0.16)')
@@ -295,21 +323,25 @@ class TerminalScene {
     this.targetView.lerp(layout.drawerTarget, drawerTravel)
     this.camera.position.lerp(layout.browsePosition, this.browserFocus)
     this.targetView.lerp(layout.browseTarget, this.browserFocus)
+    this.camera.position.lerp(layout.instructionCamera, this.instructionFocus)
+    this.targetView.lerp(layout.instructionPosition, this.instructionFocus)
     this.camera.lookAt(this.targetView)
     this.camera.updateMatrixWorld()
-    this.keypad.updateMatrixWorld()
-    this.projection.copy(this.viewport).multiply(this.camera.projectionMatrix)
-      .multiply(this.camera.matrixWorldInverse).multiply(this.keypad.matrixWorld).multiply(keypadPlane)
-    const elements = this.projection.elements
-    if (this.props.keypad.current) {
-      this.props.keypad.current.style.transform = `matrix3d(${elements.map(value => value / elements[15]).join(',')})`
-    }
+    this.projectControl(this.props.keypad.current, this.keypad, keypadPlane)
     const near = this.progress > .43 && this.progress < .66 && this.scrollTarget > .42 && this.scrollTarget < .67
     if (near !== this.near) {
       this.near = near
       if (!near) this.hoveredDemo = null
       this.props.onApproach(near)
     }
+  }
+
+  private projectControl(element: HTMLElement | null, object: THREE.Object3D, plane: THREE.Matrix4) {
+    if (!element) return
+    object.updateMatrixWorld()
+    const elements = this.projection.copy(this.viewport).multiply(this.camera.projectionMatrix)
+      .multiply(this.camera.matrixWorldInverse).multiply(object.matrixWorld).multiply(plane).elements
+    element.style.transform = `matrix3d(${elements.map(value => value / elements[15]).join(',')})`
   }
 
   private resize = () => {
@@ -324,6 +356,18 @@ class TerminalScene {
     this.stack.scale.setScalar(layout.stackScale)
     this.keypad.position.copy(layout.keypadPosition)
     this.keypad.scale.setScalar(layout.keypadScale)
+    this.keypadBase.position.set(layout.keypadPosition.x, -2.24, layout.keypadPosition.z)
+    this.keypadBase.scale.setScalar(layout.keypadScale)
+    this.instructions.position.copy(layout.instructionPosition)
+    this.instructions.scale.setScalar(layout.instructionScale)
+    this.instructions.rotation.y = layout.instructionAngle
+    const controlsWidth = layout.portrait ? 2.48 : 1.15
+    this.rackPlane.set(
+      controlsWidth / 146, 0, 0, -controlsWidth / 2,
+      0, 0, 1, .005,
+      0, (layout.portrait ? .88 : .28) / 42, 0, COUPON_BOX_DEPTH / 2 + .10,
+      0, 0, 0, 1,
+    )
     this.printer.position.copy(layout.printerPosition)
     this.printer.scale.setScalar(layout.printerScale)
     const [px, py, pz] = layout.printerPosition
@@ -357,24 +401,7 @@ class TerminalScene {
       this.card = null
     }
     if (!coupon) return
-    const card = new THREE.Group()
-    const width = Math.min(2.28, 1.6 * coupon.aspect)
-    const height = width / coupon.aspect
-    const ticket = coupon.demo ? ticketGeometry(width, .026) : null
-    if (ticket) {
-      const paper = new THREE.Mesh(ticket.paper, new THREE.MeshStandardMaterial({ color: '#fffae9', roughness: .48 }))
-      paper.castShadow = true
-      card.add(paper)
-    } else {
-      box(card, [width + 0.025, height + 0.025, 0.026], [0, 0, 0], '#fffae9', 0.013)
-    }
-    const map = new THREE.TextureLoader().load(coupon.src)
-    map.colorSpace = THREE.SRGBColorSpace
-    map.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
-    const art = new THREE.Mesh(ticket?.face ?? new THREE.PlaneGeometry(width, height),
-      new THREE.MeshStandardMaterial({ map, transparent: !ticket, alphaTest: ticket ? .3 : 0, roughness: .62 }))
-    art.position.z = ticket?.faceZ ?? .014
-    card.add(art)
+    const card = couponPaper(coupon, 2.28, 1.6, () => { this.shadowDirty = true })
     card.position.copy(rest)
     card.rotation.set(-0.07, 0, -0.1)
     this.card = card
@@ -401,7 +428,8 @@ class TerminalScene {
     this.light.material.color.set(active ? '#d7ffb3' : '#f6ba81')
     this.light.material.emissive.set(active ? '#93e769' : '#e69159')
     this.light.material.emissiveIntensity = active ? 1.7 : 0.25
-    if (props.disabled) this.hoveredDemo = null
+    if (props.disabled || props.browserOpen || props.instructionOpen) this.hoveredDemo = null
+    if (!props.browserOpen) this.previewHovered = false
     this.renderer.domElement.style.cursor = props.disabled ? 'progress' : 'default'
     this.props = props
   }
@@ -415,6 +443,10 @@ class TerminalScene {
   private down = (event: PointerEvent) => {
     if (event.button !== 0 || this.touch || this.dragging) return
     this.aim(event)
+    if (this.props.instructionOpen) {
+      if (!this.raycaster.intersectObject(this.instructions, true).length) this.props.onCloseInstructions()
+      return
+    }
     const enabled = this.near && !this.props.disabled && !this.props.browserOpen
     if (this.props.browserOpen) {
       if (this.stack.isPreviewAtPointer(this.raycaster)) {
@@ -449,6 +481,10 @@ class TerminalScene {
   }
 
   private move = (event: PointerEvent) => {
+    if (this.props.instructionOpen) {
+      this.renderer.domElement.dataset.cursor = 'default'
+      return
+    }
     if (this.touch?.id === event.pointerId) {
       const touch = this.touch
       const root = this.props.scrollRoot.current
@@ -466,7 +502,8 @@ class TerminalScene {
         this.props.onPreviewCoupon(index)
         this.props.onHoverCoupon()
       }
-      this.renderer.domElement.dataset.cursor = index !== undefined || this.stack.isPreviewAtPointer(this.raycaster) ? 'pointer' : 'default'
+      this.previewHovered = this.browserFocus > .75 && this.stack.isPreviewAtPointer(this.raycaster)
+      this.renderer.domElement.dataset.cursor = index !== undefined || this.previewHovered ? 'pointer' : 'default'
       return
     }
     if (!this.dragging) {
@@ -497,8 +534,34 @@ class TerminalScene {
 
   private leave = () => {
     this.hoveredDemo = null
+    this.previewHovered = false
     this.renderer.domElement.dataset.cursor = 'default'
     if (!this.dragging) this.renderer.domElement.style.cursor = 'default'
+  }
+
+  private updateHint(instructionHovered: boolean) {
+    const hint = this.props.objectHint.current
+    if (!hint) return
+    const point = this.hintPoint
+    let label = ''
+    if (this.props.browserOpen && this.previewHovered) {
+      label = 'Натисни, щоб узяти'
+      this.stack.previewHintPosition(point)
+    } else if (this.near && this.hoveredDemo && !this.dragging) {
+      label = 'Обери купон'
+      this.stack.localToWorld(point.set(0, 1.57, .15))
+    } else if (instructionHovered) {
+      label = 'Інструкція'
+      this.instructions.localToWorld(point.set(0, .30, -INSTRUCTION_DEPTH / 2))
+    }
+    if (label) {
+      point.project(this.camera)
+      hint.style.left = `${this.viewport.elements[0] * (point.x + 1)}px`
+      hint.style.top = `${-this.viewport.elements[5] * (1 - point.y)}px`
+      if (hint.textContent !== label) hint.textContent = label
+    }
+    const visible = String(!!label)
+    if (hint.dataset.visible !== visible) hint.dataset.visible = visible
   }
 
   private up = (event: PointerEvent) => { this.release(event, false) }
@@ -525,21 +588,32 @@ class TerminalScene {
     const delta = this.previous ? Math.min((timestamp - this.previous) / 1000, 0.08) : 0
     this.previous = timestamp
     this.clock += delta
-    const focusTarget = this.props.browserOpen ? 1 : 0
-    if (Math.abs(this.browserFocus - focusTarget) > .0001) {
-      this.browserFocus = this.props.reducedMotion || Math.abs(this.browserFocus - focusTarget) < .001
-        ? focusTarget : THREE.MathUtils.damp(this.browserFocus, focusTarget, 7, delta)
-      this.positionCamera()
-    }
+    const approach = (value: number, target: number, speed: number) =>
+      this.props.reducedMotion || Math.abs(value - target) < .001 ? target : THREE.MathUtils.damp(value, target, speed, delta)
+    const browserFocus = approach(this.browserFocus, Number(this.props.browserOpen), 7)
+    const instructionFocus = approach(this.instructionFocus, Number(this.props.instructionOpen), 6)
+    const moved = browserFocus !== this.browserFocus || instructionFocus !== this.instructionFocus
+    this.browserFocus = browserFocus
+    this.instructionFocus = instructionFocus
     if (this.progress !== this.scrollTarget && !this.dragging) {
-      this.progress = this.props.reducedMotion || Math.abs(this.progress - this.scrollTarget) < .0008
-        ? this.scrollTarget : THREE.MathUtils.damp(this.progress, this.scrollTarget, 11, delta)
+      this.progress = approach(this.progress, this.scrollTarget, 11)
       this.positionCamera()
+    } else if (moved) this.positionCamera()
+    if (this.props.browserOpen) this.projectControl(this.props.rackControls.current, this.stack, this.rackPlane)
+    const button = this.props.instructionButton.current
+    const showInstruction = this.near && !this.props.instructionOpen && !this.props.browserOpen
+    const instructionHovered = showInstruction && !this.props.disabled && !!button?.matches(':hover, :focus-visible')
+    const paperY = approach(this.instructionPaper.position.y, instructionHovered ? .08 : 0, 14)
+    if (paperY !== this.instructionPaper.position.y) {
+      this.instructionPaper.position.y = paperY
+      this.shadowDirty = true
     }
+    if (showInstruction) this.projectControl(button, this.instructions, instructionPlane)
+    this.updateHint(instructionHovered)
     this.meadow.update(this.camera, this.props.reducedMotion ? 0 : this.clock)
     this.display.update(this.clock, this.props.reducedMotion)
     if (this.keycaps.update(this.props.keypad.current?.children, this.near, delta, this.props.reducedMotion)) this.shadowDirty = true
-    if (this.stack.update(this.browserFocus, this.props.activeCoupon, !!this.hoveredDemo, delta, this.props.reducedMotion)) this.shadowDirty = true
+    if (this.stack.update(this.props.browserOpen, this.browserFocus, this.props.activeCoupon, !!this.hoveredDemo, delta, this.props.reducedMotion)) this.shadowDirty = true
     const drawerOpen = ease(THREE.MathUtils.clamp((this.progress - .64) / .36, 0, 1))
     if (this.drawer.update(drawerOpen, this.clock, this.props.reducedMotion)) this.shadowDirty = true
     if (this.props.phase === 'printing') {

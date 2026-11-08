@@ -1,6 +1,8 @@
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import type { UsedCoupon } from '../../hooks/useCouponHistory'
+import { canvasTexture } from './canvasTexture'
+import { couponPaper } from './couponPaper'
 
 export const DRAWER_WIDTH = 4.72
 export const DRAWER_X = -2.41
@@ -8,6 +10,7 @@ const DRAWER_TRAVEL = 2.95
 
 interface StoredCard {
   group: THREE.Group
+  paper: THREE.Group
   src: string
   target: THREE.Vector3
   angle: number
@@ -42,6 +45,7 @@ export class UsedCouponDrawer extends THREE.Group {
   private cards = new Map<string, StoredCard>()
   private initialized = false
   private openness = 0
+  private artworkChanged = false
 
   constructor() {
     super()
@@ -67,6 +71,42 @@ export class UsedCouponDrawer extends THREE.Group {
     part(this.sliding, [4.24, .5, .15], [0, -3.315, .29], '#af8c61')
     part(this.sliding, [DRAWER_WIDTH, .68, .2], [0, -3.25, 3.36], '#c5a078')
 
+    const label = canvasTexture(480, 136, ctx => {
+      ctx.beginPath()
+      ctx.roundRect(2, 2, 476, 132, 19)
+      ctx.fillStyle = '#efe4be'
+      ctx.fill()
+      ctx.beginPath()
+      ctx.roundRect(11, 11, 458, 114, 12)
+      ctx.lineWidth = 3
+      ctx.strokeStyle = '#627050'
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(104, 17)
+      ctx.lineTo(104, 119)
+      ctx.setLineDash([5, 6])
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.beginPath()
+      ctx.moveTo(35, 69)
+      ctx.lineTo(50, 83)
+      ctx.lineTo(77, 52)
+      ctx.lineWidth = 7
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.stroke()
+      ctx.fillStyle = '#415039'
+      ctx.font = 'bold 30px Arial, sans-serif'
+      ctx.fillText('ВИКОРИСТАНІ', 129, 61)
+      ctx.font = 'bold 34px Arial, sans-serif'
+      ctx.fillText('КУПОНИ', 129, 103)
+    })
+    const sticker = new THREE.Mesh(new THREE.PlaneGeometry(1.58, .448),
+      new THREE.MeshStandardMaterial({ map: label, alphaTest: .5, roughness: .89 }))
+    sticker.position.set(-1.33, -3.245, 3.462)
+    sticker.rotation.z = .075
+    this.sliding.add(sticker)
+
     const handle = part(this.sliding, [1.16, .095, .12], [0, -3.24, 3.65], '#c7a86b')
     handle.material.metalness = .62
     handle.material.roughness = .35
@@ -90,47 +130,41 @@ export class UsedCouponDrawer extends THREE.Group {
     }
     latest.forEach((entry, index) => {
       let card = this.cards.get(entry.id)
-      if (card && card.src !== entry.src) {
-        this.sliding.remove(card.group)
-        releaseCard(card.group)
-        this.cards.delete(entry.id)
-        card = undefined
-      }
       if (!card) {
         const group = new THREE.Group()
         group.name = 'used-coupon-' + entry.id
-        const width = Math.min(1.78, 1.06 * entry.aspect)
-        const height = width / entry.aspect
-        part(group, [width + .04, height + .04, .024], [0, 0, 0], '#f7eedc')
-        const map = new THREE.TextureLoader().load(entry.src)
-        map.colorSpace = THREE.SRGBColorSpace
-        map.anisotropy = 4
-        const image = new THREE.Mesh(
-          new THREE.PlaneGeometry(width, height),
-          new THREE.MeshStandardMaterial({ map, roughness: .82, color: '#f5efdf' }),
-        )
-        image.position.z = .014
-        group.add(image)
-        card = { group, src: entry.src, target: new THREE.Vector3(), angle: 0, pending: this.initialized, droppedAt: null }
+        const paper = couponPaper(entry, 1.78, 1.06, this.onArtworkChanged)
+        group.add(paper)
+        card = { group, paper, src: entry.src, target: new THREE.Vector3(), angle: 0, pending: this.initialized, droppedAt: null }
         this.cards.set(entry.id, card)
         this.sliding.add(group)
+      } else if (card.src !== entry.src) {
+        card.group.remove(card.paper)
+        releaseCard(card.paper)
+        card.paper = couponPaper(entry, 1.78, 1.06, this.onArtworkChanged)
+        card.group.add(card.paper)
+        card.src = entry.src
       }
       let hash = 0
       for (const char of entry.id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
       const row = Math.floor(index / 2)
       card.target.set((index % 2 - .5) * 1.98 + ((hash % 31) - 15) * .006,
-        -3.465 + index * .008, 1.05 + row * .28)
+        -3.486 + index * .013, 1.05 + row * .28)
       card.angle = ((hash % 101) / 100 - .5) * .24
       card.group.position.copy(card.target)
       card.group.rotation.set(-Math.PI / 2, 0, card.angle)
       card.group.visible = !card.pending
     })
     this.initialized = true
+    this.artworkChanged = true
   }
+
+  private onArtworkChanged = () => { this.artworkChanged = true }
 
   update(open: number, time: number, reducedMotion: boolean) {
     const amount = THREE.MathUtils.clamp(open, 0, 1)
-    let changed = Math.abs(amount - this.openness) > .0001
+    let changed = this.artworkChanged || Math.abs(amount - this.openness) > .0001
+    this.artworkChanged = false
     this.openness = amount
     this.sliding.position.z = amount * DRAWER_TRAVEL
     for (const card of this.cards.values()) {

@@ -59,6 +59,17 @@ const cards: Card[] = [
   { id: 'dream-date', lines: ['Твоя', 'маленька мрія'], description: 'Обери, що хочеш зробити разом.', category: 'Пригоди', motif: 'moon', palette: 0 },
 ]
 
+const motifCenters: Record<Card['motif'], [number, number]> = {
+  heart: [0, -9.89],
+  sun: [0, 0],
+  cup: [3.55, -1],
+  ticket: [0, 0],
+  leaf: [-.63, 3.33],
+  star: [0, -1],
+  moon: [3.92, -.49],
+  music: [-1.5, 0],
+}
+
 function escapeXml(value: string) {
   return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[character]!)
 }
@@ -69,6 +80,7 @@ function artwork(card: Card, index: number) {
   const { width, height, corner, notchX, notchRadius } = TICKET_DESIGN
   const notchLeft = notchX - notchRadius
   const notchRight = notchX + notchRadius
+  const [motifX, motifY] = motifCenters[card.motif]
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <path fill="${paper}" d="M${corner} 0 H${notchLeft}
       A${notchRadius} ${notchRadius} 0 0 0 ${notchRight} 0 H${width - corner}
@@ -80,19 +92,19 @@ function artwork(card: Card, index: number) {
     <rect x="18" y="18" width="804" height="444" rx="16" fill="none" stroke="${ink}" stroke-opacity=".32" stroke-width="2"/>
     <path d="M665 20v440" stroke="${ink}" stroke-opacity=".45" stroke-width="2" stroke-dasharray="5 9"/>
     <circle cx="740" cy="124" r="53" fill="${accent}" opacity=".24"/>
-    <g transform="translate(741 128) scale(.79)" fill="none" stroke="${ink}" stroke-width="3.7" stroke-linecap="round" stroke-linejoin="round">${motifs[card.motif]}</g>
+    <g transform="translate(740 124) scale(.79) translate(${-motifX} ${-motifY})" fill="none" stroke="${ink}" stroke-width="3.7" stroke-linecap="round" stroke-linejoin="round">${motifs[card.motif]}</g>
     <g fill="${ink}" font-family="Arial, sans-serif">
       <text x="49" y="65" font-size="24" font-weight="700">cupon.</text>
       <text x="615" y="63" text-anchor="end" font-size="15" letter-spacing="2">${escapeXml(card.category.toUpperCase())}</text>
-      <text x="48" y="192" font-size="57" font-weight="700" letter-spacing="-2">${escapeXml(card.lines[0])}</text>
-      <text x="48" y="257" font-size="57" font-weight="700" letter-spacing="-2">${escapeXml(card.lines[1])}</text>
-      <text x="49" y="319" font-size="20">${escapeXml(card.description)}</text>
+      <text x="48" y="182" font-size="57" font-weight="700" letter-spacing="-2">${escapeXml(card.lines[0])}</text>
+      <text x="48" y="234" font-size="57" font-weight="700" letter-spacing="-2">${escapeXml(card.lines[1])}</text>
+      <text x="49" y="278" font-size="22">${escapeXml(card.description)}</text>
       <path d="M49 354h562" stroke="${ink}" stroke-opacity=".24"/>
-      <text x="49" y="408" font-size="16" letter-spacing="1">ОДНА ПРИЄМНА ОБІЦЯНКА</text>
-      <text x="612" y="408" font-size="17" text-anchor="end">для тебе</text>
+      <text x="49" y="408" font-size="19" letter-spacing="1">ОДНА ПРИЄМНА ОБІЦЯНКА</text>
+      <text x="612" y="408" font-size="21" text-anchor="end">для тебе</text>
       <text x="741" y="252" text-anchor="middle" font-size="47" font-weight="700">${serial}</text>
-      <text x="741" y="280" text-anchor="middle" font-size="14" letter-spacing="2">/ ${cards.length}</text>
-      <text transform="translate(747 425) rotate(-90)" font-size="13" textLength="104">ЗБЕРИ МОМЕНТ</text>
+      <text x="741" y="276" text-anchor="middle" font-size="19" letter-spacing="1">/ ${cards.length}</text>
+      <text transform="translate(747 425) rotate(-90)" font-size="17" textLength="120">ЗБЕРИ МОМЕНТ</text>
     </g>
   </svg>`
 }
