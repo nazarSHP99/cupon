@@ -118,6 +118,8 @@ export class Keycaps extends THREE.Group {
   private surfaces: THREE.MeshStandardMaterial[] = []
   private glass: THREE.MeshPhysicalMaterial
 
+  get glassKey() { return this.caps[2] }
+
   constructor() {
     super()
     const { body, printing } = keyGeometry()

@@ -1,17 +1,14 @@
 import * as THREE from 'three'
-import { MEADOW_FOG_FAR, TERRAIN_EXTENT, meadowRandom } from './terrain'
+import { MEADOW_FOG_FAR } from './terrain'
 import { GRASS_PRESET } from './grassSettings'
 
-const TILE = 8
-const DISTANT_TILE = 16
-const FIELD_X = 40
-const FIELD_BACK = -32
-const FIELD_FRONT = 88
+import {
+  GRASS_TILE as TILE, DISTANT_GRASS_TILE as DISTANT_TILE, GRASS_EXTENT_X as FIELD_X,
+  GRASS_BACK as FIELD_BACK, GRASS_FRONT as FIELD_FRONT, ROOT_HEIGHT_RANGE, type GrassTileData,
+} from './meadowData'
 const FIELD_EDGE = 7
-const ROOT_HEIGHT_RANGE = 32
 const LOD_FEATHER = .11
 const LOD_WEIGHT = 1 + LOD_FEATHER * 2
-const timeSlice = () => new Promise<void>(resolve => window.setTimeout(resolve, 0))
 
 export async function meadowGroundTexture() {
   const map = await new THREE.TextureLoader().loadAsync(`${import.meta.env.BASE_URL}grass-ground.jpg`)
@@ -123,104 +120,25 @@ export class GrassField extends THREE.Group {
   private wind = { value: 0 }
   private detailTiles: THREE.Mesh<THREE.InstancedBufferGeometry>[] = []
   private distantTiles: THREE.Mesh<THREE.InstancedBufferGeometry>[] = []
+  private detailLods = new Map<THREE.Mesh<THREE.InstancedBufferGeometry>, THREE.InstancedBufferGeometry[]>()
   private lastPosition = new THREE.Vector3(Infinity, Infinity, Infinity)
   private tileCenter = new THREE.Vector3()
   private range: number
+  private detailMaterial: THREE.MeshLambertMaterial
+  private distantMaterial: THREE.MeshLambertMaterial
 
-  constructor(private compact: boolean) {
+  constructor(private compact: boolean, private transmissionFrustum: THREE.Frustum) {
     super()
     this.name = 'meadow-grass-blades'
     this.range = compact ? 36 : 46
+    this.detailMaterial = bladeMaterial(this.wind, this.range, true)
+    this.distantMaterial = bladeMaterial(this.wind, this.range, false)
   }
 
-  async prepare(ground: THREE.PlaneGeometry, cancelled: () => boolean) {
-    await this.plant(ground, true, cancelled)
-    if (!cancelled()) await this.plant(ground, false, cancelled)
-  }
-
-  private async plant(ground: THREE.PlaneGeometry, detailed: boolean, cancelled: () => boolean) {
-    const random = meadowRandom(detailed ? 951847 : 715419)
-    const material = bladeMaterial(this.wind, this.range, detailed)
-    const positions = ground.getAttribute('position')
-    const normals = ground.getAttribute('normal')
-    const colors = ground.getAttribute('color').array
-    const { width, height, widthSegments, heightSegments } = ground.parameters
-    const stride = widthSegments + 1
-    const cellWidth = width / widthSegments, cellDepth = height / heightSegments
-    const tileSize = detailed ? TILE : DISTANT_TILE
-    const extentX = detailed ? FIELD_X : TERRAIN_EXTENT
-    const back = detailed ? FIELD_BACK : -TERRAIN_EXTENT
-    const front = detailed ? FIELD_FRONT : TERRAIN_EXTENT
-    const density = (detailed ? (this.compact ? 80 : 125) : (this.compact ? 9 : 13))
-      * (detailed ? GRASS_PRESET.nearDensity : GRASS_PRESET.farDensity) / 100
-    const placementOrders = new Map<number, Uint16Array>()
-    let deadline = performance.now() + 7
-
-    // Curved blades follow the camera route. The simpler layer reaches every ridge.
-    for (let z = back; z < front; z += tileSize) for (let x = -extentX; x < extentX; x += tileSize) {
-      if (cancelled()) return
-      const centerX = x + tileSize / 2, centerZ = z + tileSize / 2
-      const cells = Math.floor(tileSize * Math.sqrt(density))
-      const count = cells * cells
-      let order = placementOrders.get(cells)
-      if (!order) {
-        const shuffle = meadowRandom(cells)
-        order = Uint16Array.from({ length: count }, (_, index) => index)
-        for (let index = count - 1; index > 0; index--) {
-          const other = Math.floor(shuffle() * (index + 1))
-          const cell = order[index]
-          order[index] = order[other]
-          order[other] = cell
-        }
-        placementOrders.set(cells, order)
-      }
-      const roots = new Int16Array(count * 4)
-      const appearance = new Uint8Array(count * 9)
-      let minY = Infinity, maxY = -Infinity
-
-      for (let index = 0; index < count; index++) {
-        const cell = order[index]
-        const px = x + (cell % cells + random()) * tileSize / cells
-        const pz = z + (Math.floor(cell / cells) + random()) * tileSize / cells
-        const gx = (px + width / 2) / cellWidth, gz = (pz + height / 2) / cellDepth
-        const ix = Math.floor(gx), iz = Math.floor(gz)
-        const u = gx - ix, v = gz - iz
-        const corner = iz * stride + ix
-        // Match the two triangles of the rendered surface so roots never float.
-        const firstTriangle = u + v <= 1
-        const a = firstTriangle ? corner : corner + stride + 1
-        const b = firstTriangle ? corner + 1 : corner + stride
-        const c = firstTriangle ? corner + stride : corner + 1
-        const bWeight = firstTriangle ? u : 1 - u
-        const cWeight = firstTriangle ? v : 1 - v
-        const aWeight = 1 - bWeight - cWeight
-        const y = positions.getY(a) * aWeight + positions.getY(b) * bWeight + positions.getY(c) * cWeight
-        minY = Math.min(minY, y)
-        maxY = Math.max(maxY, y)
-
-        const normal = Math.round(gz) * stride + Math.round(gx)
-        const yaw = random() * Math.PI * 2
-        const offset = index * 4
-        // Normalized local coordinates keep both dense layers small enough to instance.
-        roots[offset] = Math.round((px - centerX) * 65534 / tileSize)
-        roots[offset + 1] = Math.round((y - .013) * 32767 / ROOT_HEIGHT_RANGE)
-        roots[offset + 2] = Math.round((pz - centerZ) * 65534 / tileSize)
-        roots[offset + 3] = Math.round((.15 + .34 * random() ** 1.65) * 32767)
-        const style = index * 9
-        appearance[style] = Math.round((Math.cos(yaw) * .5 + .5) * 255)
-        appearance[style + 1] = Math.round((Math.sin(yaw) * .5 + .5) * 255)
-        const bladeWidth = .048 + .046 * random()
-        appearance[style + 2] = Math.round(bladeWidth / .2 * 255)
-        appearance[style + 3] = Math.round((index + .5) / count * 255)
-        appearance[style + 4] = Math.round((normals.getX(normal) * .5 + .5) * 255)
-        appearance[style + 5] = Math.round((normals.getZ(normal) * .5 + .5) * 255)
-        const shade = (.82 + .34 * random()) * 255
-        for (let channel = 0; channel < 3; channel++) {
-          const color = colors[a * 3 + channel] * aWeight + colors[b * 3 + channel] * bWeight + colors[c * 3 + channel] * cWeight
-          appearance[style + 6 + channel] = Math.min(255, Math.round(color * shade))
-        }
-      }
-
+  prepare(tiles: GrassTileData[]) {
+    for (const { detailed, centerX, centerZ, minY, maxY, roots, appearance } of tiles) {
+      const count = roots.length / 4
+      const tileSize = detailed ? TILE : DISTANT_TILE
       const geometry = new THREE.InstancedBufferGeometry()
       geometry.setAttribute('position', detailed ? ribbon : distantBlade)
       geometry.setAttribute('normal', bladeNormals)
@@ -236,16 +154,37 @@ export class GrassField extends THREE.Group {
         Math.hypot(tileSize / 2 + .55, tileSize / 2 + .55, (maxY - minY) / 2 + 1.1),
       )
 
-      const mesh = new THREE.Mesh(geometry, material)
+      const mesh = new THREE.Mesh(geometry, detailed ? this.detailMaterial : this.distantMaterial)
+      let transmissionCount: number | null = null
+      mesh.onBeforeRender = renderer => {
+        // The auxiliary transmission pass only needs grass behind the glass key's screen region.
+        if (renderer.toneMapping === THREE.NoToneMapping && !this.transmissionFrustum.intersectsObject(mesh)) {
+          transmissionCount = mesh.geometry.instanceCount
+          mesh.geometry.instanceCount = 0
+        }
+      }
+      mesh.onAfterRender = () => {
+        if (transmissionCount === null) return
+        mesh.geometry.instanceCount = transmissionCount
+        transmissionCount = null
+      }
       mesh.position.set(centerX, 0, centerZ)
       mesh.receiveShadow = detailed && Math.abs(centerX) < 20 && Math.abs(centerZ) < 20
-      if (detailed) this.detailTiles.push(mesh)
-      else this.distantTiles.push(mesh)
+      if (detailed) {
+        const variants = [geometry]
+        for (const [position, indices] of [[middleRibbon, middleIndices], [distantBlade, distantIndices]]) {
+          const lod = new THREE.InstancedBufferGeometry()
+          for (const [name, attribute] of Object.entries(geometry.attributes)) lod.setAttribute(name, attribute)
+          lod.setAttribute('position', position)
+          lod.setIndex(indices)
+          lod.boundingSphere = geometry.boundingSphere
+          lod.instanceCount = count
+          variants.push(lod)
+        }
+        this.detailLods.set(mesh, variants)
+        this.detailTiles.push(mesh)
+      } else this.distantTiles.push(mesh)
       this.add(mesh)
-      if (performance.now() > deadline) {
-        await timeSlice()
-        deadline = performance.now() + 7
-      }
     }
   }
 
@@ -260,11 +199,9 @@ export class GrassField extends THREE.Group {
       this.limitBlades(tile, coverage)
       const coarse = nearest > (this.compact ? 17 : 21)
       const simple = nearest > (this.compact ? 7 : 9)
-      const indices = coarse ? distantIndices : simple ? middleIndices : ribbonIndices
-      if (tile.geometry.index !== indices) {
-        tile.geometry.setIndex(indices)
-        tile.geometry.setAttribute('position', coarse ? distantBlade : simple ? middleRibbon : ribbon)
-      }
+      const geometry = this.detailLods.get(tile)![coarse ? 2 : simple ? 1 : 0]
+      geometry.instanceCount = tile.geometry.instanceCount
+      tile.geometry = geometry
     }
     for (const tile of this.distantTiles) {
       const { center, radius } = tile.geometry.boundingSphere!
@@ -277,6 +214,26 @@ export class GrassField extends THREE.Group {
       const detail = (1 - THREE.MathUtils.smoothstep(farthest, this.range * .57, this.range)) * edge
       this.limitBlades(tile, distance - radius < MEADOW_FOG_FAR ? 1 - detail : 0)
     }
+  }
+
+  prepareRenderLods(render: () => void) {
+    const originals = this.detailTiles.map(tile => tile.geometry)
+    try {
+      for (let level = 0; level < 3; level++) {
+        for (const [tile, variants] of this.detailLods) {
+          variants[level].instanceCount = tile.geometry.instanceCount
+          tile.geometry = variants[level]
+        }
+        render()
+      }
+    } finally {
+      this.detailTiles.forEach((tile, index) => { tile.geometry = originals[index] })
+    }
+  }
+
+  disposeLods() {
+    for (const variants of this.detailLods.values()) for (const geometry of variants) geometry.dispose()
+    this.detailLods.clear()
   }
 
   private limitBlades(tile: THREE.Mesh<THREE.InstancedBufferGeometry>, coverage: number) {

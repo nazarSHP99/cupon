@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { GrassField, grassGroundMaterial, meadowGroundTexture } from './GrassField'
-import { meadowTurfColor, terrainHeight, TERRAIN_EXTENT } from './terrain'
+import { generateMeadowData, type MeadowData } from './meadowData'
 import { wildflowers } from './Wildflowers'
 
 const sun = new THREE.Vector3(-15, 12, 8).normalize()
@@ -75,43 +75,78 @@ const timeSlice = () => new Promise<void>(resolve => {
 export class Meadow extends THREE.Group {
   private dome = sky()
   private grass: GrassField | null = null
+  private cancelBuild: (() => void) | null = null
 
-  constructor(private compact: boolean) {
+  constructor(private compact: boolean, private transmissionFrustum: THREE.Frustum) {
     super()
     this.add(this.dome)
   }
 
   async prepare(cancelled: () => boolean) {
-    await timeSlice()
-    if (cancelled()) return
-    const map = await meadowGroundTexture()
-    if (cancelled()) { map.dispose(); return }
-    const ground = new THREE.PlaneGeometry(TERRAIN_EXTENT * 2, TERRAIN_EXTENT * 2, 256, 256).rotateX(-Math.PI / 2)
-    const vertices = ground.getAttribute('position')
-    const colors = new Float32Array(vertices.count * 3)
-    const color = new THREE.Color()
-    let deadline = performance.now() + 7
-    for (let i = 0; i < vertices.count; i++) {
-      const x = vertices.getX(i), z = vertices.getZ(i)
-      const y = terrainHeight(x, z)
-      vertices.setY(i, y)
-      meadowTurfColor(color, x, z).toArray(colors, i * 3)
-      if (i % 1024 === 0 && performance.now() > deadline) {
-        await timeSlice()
-        if (cancelled()) { ground.dispose(); map.dispose(); return }
-        deadline = performance.now() + 7
-      }
-    }
-    ground.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-    ground.computeVertexNormals()
+    const [map, data] = await Promise.all([meadowGroundTexture(), this.buildData(cancelled)])
+    if (cancelled() || !data) { map.dispose(); return }
+    const ground = new THREE.BufferGeometry()
+    ground.setAttribute('position', new THREE.BufferAttribute(data.ground.position, 3))
+    ground.setAttribute('normal', new THREE.BufferAttribute(data.ground.normal, 3))
+    ground.setAttribute('uv', new THREE.BufferAttribute(data.ground.uv, 2))
+    ground.setAttribute('color', new THREE.BufferAttribute(data.ground.color, 3))
+    ground.setIndex(new THREE.BufferAttribute(data.ground.index, 1))
     const field = new THREE.Mesh(ground, grassGroundMaterial(map))
     field.receiveShadow = true
     field.name = 'textured-meadow-ground'
     this.add(field)
-    this.grass = new GrassField(this.compact)
+    this.grass = new GrassField(this.compact, this.transmissionFrustum)
     this.add(this.grass)
-    await this.grass.prepare(ground, cancelled)
+    this.grass.prepare(data.tiles)
     if (!cancelled()) this.add(wildflowers(this.compact))
+  }
+
+  private async buildData(cancelled: () => boolean): Promise<MeadowData | null> {
+    try {
+      return await new Promise<MeadowData | null>((resolve, reject) => {
+        const worker = new Worker(new URL('./meadow.worker.ts', import.meta.url), { type: 'module' })
+        this.cancelBuild = () => { worker.terminate(); resolve(null) }
+        worker.onmessage = (event: MessageEvent<MeadowData>) => {
+          worker.terminate()
+          this.cancelBuild = null
+          resolve(event.data)
+        }
+        worker.onerror = event => {
+          event.preventDefault()
+          worker.terminate()
+          this.cancelBuild = null
+          reject(new Error('Meadow worker unavailable'))
+        }
+        worker.postMessage(this.compact)
+      })
+    } catch {
+      // Keep the scene usable in browsers that prevent workers from starting.
+      if (cancelled()) return null
+      const generation = generateMeadowData(this.compact)
+      const tiles: MeadowData['tiles'] = []
+      let deadline = performance.now() + 7
+      let result = generation.next()
+      while (!result.done) {
+        if (cancelled()) return null
+        tiles.push(result.value)
+        if (performance.now() > deadline) {
+          await timeSlice()
+          deadline = performance.now() + 7
+        }
+        result = generation.next()
+      }
+      return { ground: result.value, tiles }
+    }
+  }
+
+  cancelPreparation() {
+    this.cancelBuild?.()
+    this.cancelBuild = null
+    this.grass?.disposeLods()
+  }
+
+  prepareRenderLods(render: () => void) {
+    this.grass?.prepareRenderLods(render)
   }
 
   update(camera: THREE.Camera, time: number) {

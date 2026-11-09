@@ -144,7 +144,7 @@ class TerminalScene {
   private card: THREE.Group | null = null
   private display: LedDisplay
   private assets: Promise<void>
-  private compiling: Promise<THREE.Object3D> | null = null
+  private compiling: Promise<unknown> | null = null
   private reportedReady = false
   private shadowDirty = true
   private near = false
@@ -153,6 +153,10 @@ class TerminalScene {
   private layout: ReturnType<typeof getSceneLayout> | null = null
   private targetView = new THREE.Vector3()
   private projection = new THREE.Matrix4()
+  private transmissionFrustum = new THREE.Frustum()
+  private transmissionBounds = new THREE.Box3()
+  private transmissionPoint = new THREE.Vector3()
+  private controlTransforms = new WeakMap<HTMLElement, string>()
   private viewport = new THREE.Matrix4()
   private rackPlane = new THREE.Matrix4()
   private touch: { id: number; start: number; last: number; moved: boolean; demo: THREE.Object3D | null } | null = null
@@ -186,7 +190,7 @@ class TerminalScene {
     this.renderer.domElement.setAttribute('aria-label', 'Купоноприймач, принтер чеків і демокупони на столі. Натисни на купон, щоб обрати. Перетягни його до приймача або скористайся кнопкою. Після активації принтер надрукує чек.')
     this.renderer.domElement.setAttribute('role', 'img')
     this.host.appendChild(this.renderer.domElement)
-    this.meadow = new Meadow(host.clientWidth < 760)
+    this.meadow = new Meadow(host.clientWidth < 760, this.transmissionFrustum)
     this.scene.fog = new THREE.Fog('#c6b6c9', MEADOW_FOG_NEAR, MEADOW_FOG_FAR)
     this.scene.add(this.meadow)
     this.scene.add(new THREE.HemisphereLight('#e9e3fa', '#9b9d78', 1.55))
@@ -303,7 +307,39 @@ class TerminalScene {
     try { await this.compiling }
     finally { this.compiling = null }
     if (this.destroyed) return
+    this.compiling = this.prepareSceneResources()
+    try { await this.compiling }
+    finally { this.compiling = null }
+    if (this.destroyed) return
     this.animation = requestAnimationFrame(this.frame)
+  }
+
+  private async prepareSceneResources() {
+    const target = new THREE.WebGLRenderTarget(1, 1)
+    const previousTarget = this.renderer.getRenderTarget()
+    const grass: { mesh: THREE.Mesh<THREE.InstancedBufferGeometry>; count: number; visible: boolean; culled: boolean }[] = []
+    try {
+      this.renderer.setRenderTarget(target)
+      this.renderer.shadowMap.needsUpdate = true
+      this.scene.traverse(object => {
+        if (!(object instanceof THREE.Mesh) || !(object.geometry instanceof THREE.InstancedBufferGeometry)) return
+        grass.push({ mesh: object, count: object.geometry.instanceCount, visible: object.visible, culled: object.frustumCulled })
+        // A single blade uploads the complete tile without drawing millions of blades during preparation.
+        object.geometry.instanceCount = 1
+        object.visible = true
+        object.frustumCulled = false
+      })
+      this.meadow.prepareRenderLods(() => this.renderer.render(this.scene, this.camera))
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    } finally {
+      for (const { mesh, count, visible, culled } of grass) {
+        mesh.geometry.instanceCount = count
+        mesh.visible = visible
+        mesh.frustumCulled = culled
+      }
+      this.renderer.setRenderTarget(previousTarget)
+      target.dispose()
+    }
   }
 
   private scroll = () => {
@@ -328,6 +364,7 @@ class TerminalScene {
     this.camera.lookAt(this.targetView)
     this.camera.updateMatrixWorld()
     this.projectControl(this.props.keypad.current, this.keypad, keypadPlane)
+    this.updateTransmissionFrustum()
     const near = this.progress > .43 && this.progress < .66 && this.scrollTarget > .42 && this.scrollTarget < .67
     if (near !== this.near) {
       this.near = near
@@ -336,12 +373,41 @@ class TerminalScene {
     }
   }
 
+  private updateTransmissionFrustum() {
+    const { min, max } = this.transmissionBounds.setFromObject(this.keycaps.glassKey)
+    let left = Infinity, right = -Infinity, bottom = Infinity, top = -Infinity
+    for (const x of [min.x, max.x]) for (const y of [min.y, max.y]) for (const z of [min.z, max.z]) {
+      const point = this.transmissionPoint.set(x, y, z).project(this.camera)
+      left = Math.min(left, point.x)
+      right = Math.max(right, point.x)
+      bottom = Math.min(bottom, point.y)
+      top = Math.max(top, point.y)
+    }
+    // Keep a 64px margin for refraction and the glass key's roughness filter.
+    const marginX = 64 / this.viewport.elements[0], marginY = -64 / this.viewport.elements[5]
+    left -= marginX
+    right += marginX
+    bottom -= marginY
+    top += marginY
+    this.projection.set(
+      2 / (right - left), 0, 0, -(right + left) / (right - left),
+      0, 2 / (top - bottom), 0, -(top + bottom) / (top - bottom),
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ).multiply(this.camera.projectionMatrix).multiply(this.camera.matrixWorldInverse)
+    this.transmissionFrustum.setFromProjectionMatrix(this.projection)
+  }
+
   private projectControl(element: HTMLElement | null, object: THREE.Object3D, plane: THREE.Matrix4) {
     if (!element) return
     object.updateMatrixWorld()
     const elements = this.projection.copy(this.viewport).multiply(this.camera.projectionMatrix)
       .multiply(this.camera.matrixWorldInverse).multiply(object.matrixWorld).multiply(plane).elements
-    element.style.transform = `matrix3d(${elements.map(value => value / elements[15]).join(',')})`
+    const transform = `matrix3d(${elements.map(value => value / elements[15]).join(',')})`
+    if (this.controlTransforms.get(element) !== transform) {
+      element.style.transform = transform
+      this.controlTransforms.set(element, transform)
+    }
   }
 
   private resize = () => {
@@ -663,6 +729,7 @@ class TerminalScene {
 
   dispose() {
     this.destroyed = true
+    this.meadow.cancelPreparation()
     cancelAnimationFrame(this.animation)
     this.observer.disconnect()
     this.props.scrollRoot.current?.removeEventListener('scroll', this.scroll)
