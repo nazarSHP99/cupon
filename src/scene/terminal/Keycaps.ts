@@ -113,6 +113,7 @@ interface KeyLabel {
 }
 
 export class Keycaps extends THREE.Group {
+  private compact = false
   private caps: THREE.Group[] = []
   private legends: KeyLabel[] = []
   private surfaces: THREE.MeshStandardMaterial[] = []
@@ -177,14 +178,14 @@ export class Keycaps extends THREE.Group {
 
   private print(index: number, text: string, sound: boolean, disabled: boolean) {
     const legend = this.legends[index]
-    const signature = text + sound + disabled
+    const signature = text + sound + disabled + this.compact
     if (legend.signature === signature) return
     legend.signature = signature
     const context = legend.context
     context.clearRect(0, 0, 512, 416)
     context.globalAlpha = disabled ? .72 : 1
     context.fillStyle = context.strokeStyle = inkColors[index]
-    context.font = '600 96px Arial, sans-serif'
+    context.font = `600 ${this.compact ? 112 : 96}px Arial, sans-serif`
     context.textAlign = 'center'
     context.fillText(text, 256, 328, 430)
     context.save()
@@ -198,6 +199,10 @@ export class Keycaps extends THREE.Group {
     context.stroke(new Path2D(path))
     context.restore()
     legend.texture.needsUpdate = true
+  }
+
+  setCompact(compact: boolean) {
+    this.compact = compact
   }
 
   update(buttons: HTMLCollection | undefined, active: boolean, delta: number, reducedMotion: boolean) {

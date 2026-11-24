@@ -15,7 +15,7 @@ const SLOT_SPACING = .11
 const CARD_CENTER_Y = CARD_BASE_Y + Math.cos(CARD_LEAN) * CARD_HEIGHT / 2
 
 function previewPosition(portrait: boolean) {
-  return new THREE.Vector3(portrait ? 0 : COUPON_PREVIEW_X, CARD_CENTER_Y + (portrait ? 1.55 : .53), portrait ? -1.95 : .04)
+  return new THREE.Vector3(portrait ? 0 : COUPON_PREVIEW_X, CARD_CENTER_Y + (portrait ? 2.85 : .53), portrait ? -.95 : .04)
 }
 
 export function couponBoxViewPoints(portrait: boolean) {

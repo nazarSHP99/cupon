@@ -160,9 +160,9 @@ export class Meadow extends THREE.Group {
     }
   }
 
-  ensureViewport(width: number, height: number, cancelled: () => boolean) {
+  ensureViewport(width: number, height: number, cancelled: () => boolean, compact: boolean) {
     // Very unusual window shapes retain the entire field rather than risk a missing edge.
-    if (width >= 320 && width / height >= (width > 820 ? .5 : .2) && width / height <= 4 && height >= 160) return
+    if (width >= 320 && width / height >= (compact ? .2 : .5) && width / height <= 4 && height >= 160) return
     this.unrestricted = true
     if (this.prepared) void this.expandCoverage(cancelled)
   }

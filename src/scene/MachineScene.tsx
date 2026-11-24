@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { DEMO_COUPONS, type Coupon } from '../coupons/coupon'
 import { PRINT_DURATION, type Receipt } from '../coupons/receipt'
-import { getSceneLayout, grassCameraCoverage, sceneCamera } from './sceneLayout'
+import { getSceneLayout, grassCameraCoverage, KEYPAD_TILT, sceneCamera } from './sceneLayout'
 import { COUPON_BOX_DEPTH, CouponBox } from './terminal/CouponBox'
 import { couponPaper } from './terminal/couponPaper'
 import { UsedCouponDrawer } from './terminal/UsedCouponDrawer'
@@ -48,8 +48,8 @@ interface SceneProps {
   disabled: boolean
 }
 
-const rest = new THREE.Vector3(-0.22, -1.1, 2.05)
-const insertion = new THREE.Vector3(0, 0.105, 1.72)
+const rest = new THREE.Vector3(0, -.3, 1.08)
+const insertion = new THREE.Vector3(0, 0.105, 2.08)
 const ease = (t: number) => t * t * (3 - 2 * t)
 const KEYPAD_WIDTH = 360
 const KEYPAD_HEIGHT = 226
@@ -70,9 +70,9 @@ const instructionPlane = new THREE.Matrix4().set(
 function keypadBase() {
   const side = new THREE.Shape()
   side.moveTo(-.87, .006)
-  side.lineTo(.67, .006)
-  side.lineTo(.67, .08)
-  side.lineTo(-.87, .71)
+  side.lineTo(.64, .006)
+  side.lineTo(.64, .009)
+  side.lineTo(-.87, .816)
   side.closePath()
   const base = new THREE.Mesh(
     new THREE.ExtrudeGeometry(side, { depth: 2.69, bevelEnabled: false }).rotateY(-Math.PI / 2).translate(1.345, 0, 0),
@@ -174,12 +174,16 @@ class TerminalScene {
   private startPosition = rest.clone()
   private startRotation = new THREE.Euler()
   private dragging = false
+  private dragPointer: number | null = null
+  private suppressDragClickUntil = 0
+  private cardReturn: 'lift' | 'back' | null = null
   private over = false
   private pointer = new THREE.Vector2()
   private raycaster = new THREE.Raycaster()
   private dragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -2.05)
   private hit = new THREE.Vector3()
   private grabOffset = new THREE.Vector3()
+  private slotEdge = new THREE.Vector3()
   private dragPosition = rest.clone()
   private target = rest.clone()
   private destroyed = false
@@ -277,7 +281,7 @@ class TerminalScene {
     this.drawer.setEntries(props.usedCoupons)
     this.instructions.add(this.instructionPaper)
     this.scene.add(woodenTable(), this.stack, this.drawer, this.keypad, this.keypadBase, this.instructions)
-    this.keypad.rotation.x = -1.08
+    this.keypad.rotation.x = KEYPAD_TILT
     box(this.keypad, [2.83, 1.72, .235], [0, 0, -.102], '#b9bdba', .11)
     box(this.keypad, [2.74, 1.63, .08], [0, 0, -.018], '#d5d7d3', .073)
     this.keypad.add(this.keycaps)
@@ -302,8 +306,13 @@ class TerminalScene {
     canvas.addEventListener('pointermove', this.move)
     canvas.addEventListener('pointerup', this.up)
     canvas.addEventListener('pointercancel', this.cancel)
-    canvas.addEventListener('lostpointercapture', this.cancel)
+    canvas.addEventListener('lostpointercapture', this.lostCapture)
     canvas.addEventListener('pointerleave', this.leave)
+    window.addEventListener('pointermove', this.routeDragMove, { passive: false })
+    window.addEventListener('pointerup', this.routeDragUp)
+    window.addEventListener('pointercancel', this.routeDragCancel)
+    window.addEventListener('blur', this.cancelPointerOnBlur)
+    this.host.ownerDocument.addEventListener('click', this.suppressDragClick, true)
     this.observer = new ResizeObserver(this.resize)
     this.observer.observe(host)
     this.props.scrollRoot.current?.addEventListener('scroll', this.scroll, { passive: true })
@@ -395,6 +404,7 @@ class TerminalScene {
   }
 
   private keypadPointerUp = () => {
+    if (this.dragging || this.touch) return
     if (this.layout?.compact && this.near && !this.props.disabled && this.keypadFocus < .9) this.keypadFocused = true
   }
 
@@ -473,17 +483,24 @@ class TerminalScene {
     const { width, height } = this.host.getBoundingClientRect()
     if (!width || !height) return
     const preserveJourney = this.layout !== null
+    if (preserveJourney && (this.dragging || this.touch || this.cardReturn)) {
+      this.cancelPointerOnBlur()
+      this.cardReturn = null
+      if (this.card && this.props.phase === 'ready') this.card.position.copy(rest)
+    }
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.4, Math.sqrt(2_250_000 / (width * height))))
     this.renderer.setSize(width, height)
     this.shadowDirty = true
     const layout = this.layout = getSceneLayout(width, height)
-    this.meadow.ensureViewport(width, height, () => this.destroyed)
-    this.machine.position.x = layout.machineX
+    this.meadow.ensureViewport(width, height, () => this.destroyed, layout.compact)
+    this.machine.position.copy(layout.machinePosition)
+    this.dragPlane.constant = -layout.dragPlaneZ
     this.stack.position.copy(layout.stackPosition)
     this.stack.scale.setScalar(layout.stackScale)
     this.stack.setPortrait(layout.portrait)
     this.keypad.position.copy(layout.keypadPosition)
     this.keypad.scale.setScalar(layout.keypadScale)
+    this.keycaps.setCompact(layout.compact)
     this.keypadBase.position.set(layout.keypadPosition.x, -2.24, layout.keypadPosition.z)
     this.keypadBase.scale.setScalar(layout.keypadScale)
     this.instructions.position.copy(layout.instructionPosition)
@@ -500,16 +517,25 @@ class TerminalScene {
     this.printer.scale.setScalar(layout.printerScale)
     const [px, py, pz] = layout.printerPosition
     const scale = layout.printerScale
-    const cablePoints = [
+    const cablePoints = layout.compact ? [
+      new THREE.Vector3(px + 1.17 * scale, py + .28 * scale, pz - .3 * scale),
+      new THREE.Vector3(2.4, -2.2, .0),
+      new THREE.Vector3(2.4, -2.2, layout.machinePosition.z - 1.3),
+      new THREE.Vector3(layout.machineX - 1.95, -2.2, layout.machinePosition.z - 1.3),
+      new THREE.Vector3(layout.machineX - 1.95, -2.2, layout.machinePosition.z - .28),
+      new THREE.Vector3(layout.machineX - 1.69, -1.94, layout.machinePosition.z - .28),
+    ] : [
       new THREE.Vector3(px + 1.17 * scale, py + 0.28 * scale, pz - 0.3 * scale),
       new THREE.Vector3(px + 1.45 * scale, -2.2, pz - 0.7 * scale),
       new THREE.Vector3((px + layout.machineX) / 2, -2.2, pz - 0.9 * scale),
-      new THREE.Vector3(layout.machineX - 1.95, -2.2, -0.85),
-      new THREE.Vector3(layout.machineX - 1.69, -1.94, -0.28),
+      new THREE.Vector3(layout.machineX - 1.95, -2.2, layout.machinePosition.z - .85),
+      new THREE.Vector3(layout.machineX - 1.69, -1.94, layout.machinePosition.z - .28),
     ]
     this.cable.geometry.dispose()
     this.cable.geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(cablePoints), 72, layout.portrait ? 0.018 : 0.028, 8, false)
     this.contact.position.x = layout.machineX
+    this.contact.position.z = layout.machinePosition.z
+    this.contact.scale.set(layout.compact ? .9 : 1, layout.compact ? .72 : 1, 1)
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
     this.viewport.set(
@@ -533,7 +559,8 @@ class TerminalScene {
     if (!coupon) return
     const card = couponPaper(coupon, 2.28, 1.6, () => { this.shadowDirty = true })
     card.position.copy(rest)
-    card.rotation.set(-0.07, 0, -0.1)
+    card.rotation.set(-.04, 0, -.03)
+    this.cardReturn = null
     this.card = card
     this.machine.add(card)
   }
@@ -571,6 +598,47 @@ class TerminalScene {
     this.raycaster.setFromCamera(this.pointer, this.camera)
   }
 
+  private ownsPointer(event: PointerEvent) {
+    return this.touch?.id === event.pointerId || this.dragging && this.dragPointer === event.pointerId
+  }
+
+  // Keep a picked-up coupon in control when the pointer crosses a projected desk button.
+  private routeDragMove = (event: PointerEvent) => {
+    if (!this.ownsPointer(event) || event.target === this.renderer.domElement) return
+    event.preventDefault()
+    this.move(event)
+  }
+
+  private routeDragUp = (event: PointerEvent) => {
+    if (!this.ownsPointer(event) || event.target === this.renderer.domElement) return
+    event.preventDefault()
+    event.stopPropagation()
+    this.up(event)
+  }
+
+  private routeDragCancel = (event: PointerEvent) => {
+    if (!this.ownsPointer(event) || event.target === this.renderer.domElement) return
+    event.stopPropagation()
+    this.cancel(event)
+  }
+
+  private suppressDragClick = (event: MouseEvent) => {
+    if (!event.isTrusted || !event.detail || performance.now() > this.suppressDragClickUntil) return
+    this.suppressDragClickUntil = 0
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+
+  private lostCapture = (event: PointerEvent) => {
+    // A still-pressed pointer continues through the window handlers instead of dropping the coupon.
+    if (!event.buttons) this.cancel(event)
+  }
+
+  private cancelPointerOnBlur = () => {
+    const id = this.touch?.id ?? this.dragPointer
+    if (id !== null && id !== undefined) this.cancel(new PointerEvent('pointercancel', { pointerId: id }))
+  }
+
   private down = (event: PointerEvent) => {
     if (event.button !== 0 || this.touch || this.dragging) return
     this.aim(event)
@@ -596,7 +664,7 @@ class TerminalScene {
       return
     }
     const cardHit = enabled && this.props.phase === 'ready' && this.card
-      && this.raycaster.intersectObject(this.card, true).length
+      ? this.raycaster.intersectObject(this.card, true)[0] : undefined
     if (!cardHit || !this.card) {
       const object = enabled ? this.demoAtPointer() : null
       if (event.pointerType === 'touch') {
@@ -608,10 +676,14 @@ class TerminalScene {
     this.machine.worldToLocal(this.hit)
     event.preventDefault()
     this.dragging = true
+    this.dragPointer = event.pointerId
+    this.cardReturn = null
     this.renderer.domElement.dataset.cursor = 'grabbing'
     this.over = false
-    this.dragPosition.copy(this.card.position)
-    this.grabOffset.copy(this.hit).sub(this.card.position)
+    // Pick the coupon up in front of every desk object, keeping its grabbed point under the pointer.
+    this.grabOffset.copy(cardHit.point)
+    this.machine.worldToLocal(this.grabOffset).sub(this.card.position)
+    this.dragPosition.copy(this.hit).sub(this.grabOffset)
     this.renderer.domElement.setPointerCapture(event.pointerId)
     this.props.onDragHint('dragging')
   }
@@ -646,6 +718,7 @@ class TerminalScene {
       this.renderer.domElement.dataset.cursor = 'default'
       return
     }
+    if (this.dragging && this.dragPointer !== event.pointerId) return
     this.aim(event)
     if (this.props.browserOpen && event.pointerType !== 'touch') {
       const index = this.browserFocus > .75 ? this.stack.couponIndexAtPointer(this.raycaster) : undefined
@@ -670,8 +743,14 @@ class TerminalScene {
     this.machine.worldToLocal(this.hit)
     this.dragPosition.copy(this.hit).sub(this.grabOffset)
     this.dragPosition.x = THREE.MathUtils.clamp(this.dragPosition.x, -2.8, 2.8)
-    this.dragPosition.y = THREE.MathUtils.clamp(this.dragPosition.y, -2, 2.6)
-    this.over = Math.abs(this.dragPosition.x) < 0.75 && Math.abs(this.dragPosition.y - 0.105) < 0.48
+    this.dragPosition.y = THREE.MathUtils.clamp(this.dragPosition.y, -2, 6)
+    const center = this.machine.localToWorld(this.hit.copy(this.dragPosition)).project(this.camera)
+    const slot = this.machine.localToWorld(this.target.set(0, .105, .905)).project(this.camera)
+    const dx = Math.abs(center.x - slot.x) * this.viewport.elements[0]
+    const dy = Math.abs(center.y - slot.y) * -this.viewport.elements[5]
+    const slotEdge = this.machine.localToWorld(this.slotEdge.set(1.225, .105, .905)).project(this.camera)
+    const slotWidth = Math.abs(slotEdge.x - slot.x) * this.viewport.elements[0] * 2
+    this.over = dx < Math.max(28, slotWidth * .31) && dy < Math.max(28, slotWidth * .2)
     this.props.onDragHint(this.over ? 'over' : 'dragging')
   }
 
@@ -725,9 +804,12 @@ class TerminalScene {
       if (!cancelled && !moved && this.near && !this.props.disabled) action?.()
       return
     }
-    if (!this.dragging) return
+    if (!this.dragging || this.dragPointer !== event.pointerId) return
     this.dragging = false
+    this.dragPointer = null
+    if (!cancelled) this.suppressDragClickUntil = performance.now() + 400
     const accept = this.over && !cancelled
+    this.cardReturn = accept ? null : 'lift'
     this.over = false
     if (this.renderer.domElement.hasPointerCapture(event.pointerId)) this.renderer.domElement.releasePointerCapture(event.pointerId)
     this.props.onDragHint('idle')
@@ -787,24 +869,29 @@ class TerminalScene {
           card.position.lerpVectors(this.startPosition, insertion, t)
           card.rotation.set(THREE.MathUtils.lerp(this.startRotation.x, -Math.PI / 2, t), THREE.MathUtils.lerp(this.startRotation.y, 0, t), THREE.MathUtils.lerp(this.startRotation.z, 0, t))
         } else {
-          card.position.set(0, 0.105, THREE.MathUtils.lerp(1.72, -0.8, ease((progress - 0.43) / 0.57)))
+          card.position.set(0, 0.105, THREE.MathUtils.lerp(insertion.z, -0.8, ease((progress - 0.43) / 0.57)))
           card.rotation.set(-Math.PI / 2, 0, 0)
         }
         card.visible = progress < 0.98
       } else if (this.dragging) {
         card.position.copy(this.dragPosition)
-        card.rotation.x = THREE.MathUtils.damp(card.rotation.x, this.over ? -0.75 : -0.09, 10, delta)
-        card.rotation.z = THREE.MathUtils.damp(card.rotation.z, this.over ? 0 : -0.055, 10, delta)
+        card.rotation.x = THREE.MathUtils.damp(card.rotation.x, this.over ? -0.75 : -.04, 10, delta)
+        card.rotation.z = THREE.MathUtils.damp(card.rotation.z, this.over ? 0 : -.03, 10, delta)
       } else {
         this.target.copy(rest)
-        if (this.layout?.compact) {
-          this.target.y = THREE.MathUtils.lerp(rest.y, .4, this.keypadFocus)
-          this.target.z = THREE.MathUtils.lerp(rest.z, 1.35, this.keypadFocus)
+        if (this.props.reducedMotion) this.cardReturn = null
+        if (this.cardReturn === 'lift') {
+          this.target.copy(card.position)
+          this.target.y = .2
+          if (card.position.y > .1) this.cardReturn = 'back'
+        } else if (this.cardReturn === 'back') {
+          this.target.y = .2
+          if (card.position.distanceTo(this.target) < .05) this.cardReturn = null
         }
-        if (!this.props.reducedMotion) this.target.y += Math.sin(this.clock * 1.6) * 0.045
-        card.position.lerp(this.target, 1 - Math.exp(-9 * delta))
-        card.rotation.x = THREE.MathUtils.damp(card.rotation.x, -0.07, 8, delta)
-        card.rotation.z = THREE.MathUtils.damp(card.rotation.z, -0.1, 8, delta)
+        if (!this.props.reducedMotion && !this.cardReturn) this.target.y += Math.sin(this.clock * 1.6) * .03
+        card.position.lerp(this.target, this.props.reducedMotion ? 1 : 1 - Math.exp(-9 * delta))
+        card.rotation.x = THREE.MathUtils.damp(card.rotation.x, -.04, 8, delta)
+        card.rotation.z = THREE.MathUtils.damp(card.rotation.z, -.03, 8, delta)
       }
     }
     if (this.shadowDirty) {
@@ -835,8 +922,13 @@ class TerminalScene {
     canvas.removeEventListener('pointermove', this.move)
     canvas.removeEventListener('pointerup', this.up)
     canvas.removeEventListener('pointercancel', this.cancel)
-    canvas.removeEventListener('lostpointercapture', this.cancel)
+    canvas.removeEventListener('lostpointercapture', this.lostCapture)
     canvas.removeEventListener('pointerleave', this.leave)
+    window.removeEventListener('pointermove', this.routeDragMove)
+    window.removeEventListener('pointerup', this.routeDragUp)
+    window.removeEventListener('pointercancel', this.routeDragCancel)
+    window.removeEventListener('blur', this.cancelPointerOnBlur)
+    this.host.ownerDocument.removeEventListener('click', this.suppressDragClick, true)
     canvas.remove()
     const release = () => {
       disposeObject(this.scene)
