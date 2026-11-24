@@ -163,13 +163,30 @@ button svg { flex-shrink: 0; }
   position: fixed;
   z-index: 5;
   inset: 0;
+  display: grid;
+  place-items: center;
   background: #f8faf7;
   transition: opacity .58s ease, visibility 0s linear .58s;
 }
 .boot--done { opacity: 0; visibility: hidden; pointer-events: none; }
+.boot-panel { transition: filter .58s ease, transform .58s ease; }
+.boot--done .boot-panel { filter: blur(9px); transform: scale(1.04); }
+.boot-machine { position: relative; width: 144px; height: 176px; }
+.boot-machine svg { display: block; }
+.boot-feed { position: absolute; top: 79px; left: 41px; width: 62px; height: 97px; overflow: hidden; }
+.boot-slot { position: absolute; top: 71px; left: 33px; }
+.boot-coupon { animation: feed-coupon 1.7s infinite; will-change: transform, opacity; }
+.boot--done .boot-coupon { animation-play-state: paused; }
+@keyframes feed-coupon {
+  0%, 5% { transform: translate3d(0, 59px, 0); opacity: 0; }
+  22% { transform: translate3d(0, 35px, 0); opacity: 1; }
+  34% { transform: translate3d(0, 31px, 0); opacity: 1; }
+  49% { transform: translate3d(0, 31px, 0); opacity: 1; }
+  82%, 100% { transform: translate3d(0, -43px, 0); opacity: 1; }
+}
 .boot-progress { position: absolute; inset: 0 0 auto; height: 3px; overflow: hidden; background: #e1e9de; }
-.boot-progress > span { display: block; width: 100%; height: 100%; background: #60793d; transform-origin: left; transition: transform .18s linear; }
-.boot-percent { position: absolute; top: max(16px, env(safe-area-inset-top)); left: 50%; translate: -50% 0; color: #243527; font: 14px/1.4 monospace; font-variant-numeric: tabular-nums; }
+.boot-progress > span { display: block; width: 100%; height: 100%; background: #d84f2e; transform-origin: left; transition: transform .18s linear; }
+.boot-percent { position: absolute; top: max(16px, env(safe-area-inset-top)); left: 50%; translate: -50% 0; color: #d84f2e; font: 700 18px/1.2 monospace; font-variant-numeric: tabular-nums; }
 @keyframes indicate { 0%, 100% { translate: 0 0; opacity: 1; } 65% { translate: 0 3px; opacity: .35; } }
 
 .scene-fallback { position: absolute; inset: 0; display: flex; gap: 24px; align-items: center; justify-content: center; padding-bottom: min(23svh, 180px); }
@@ -191,4 +208,5 @@ button svg { flex-shrink: 0; }
 .app-shell[data-fallback='true'] .key svg { width: 25px; height: 25px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  .boot-coupon { transform: translateY(24px); }
 }
