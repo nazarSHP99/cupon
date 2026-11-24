@@ -883,7 +883,8 @@ class TerminalScene {
       } else if (this.dragging) {
         const proximity = this.dragMoved ? ease(THREE.MathUtils.clamp(1 - Math.max(Math.abs(this.dragEdge.x) / 1.6, Math.abs(this.dragEdge.y - SLOT_EDGE.y) / .85), 0, 1)) : 0
         const angle = THREE.MathUtils.lerp(REST_TILT, -.98, this.over ? 1 : proximity)
-        this.target.copy(this.over ? SLOT_EDGE : this.dragEdge)
+        this.target.copy(this.dragEdge)
+        if (this.over) this.target.lerp(SLOT_EDGE, .18 * proximity)
         this.guidedEdge.lerp(this.target, this.props.reducedMotion ? 1 : 1 - Math.exp(-18 * delta))
         card.rotation.x = approach(card.rotation.x, angle, 12)
         card.rotation.z = approach(card.rotation.z, 0, 12)

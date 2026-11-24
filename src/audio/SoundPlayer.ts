@@ -1,5 +1,4 @@
-import { PRINT_DURATION } from '../coupons/receipt'
-import { keyboardClick, thermalPrinter } from './mechanicalSounds'
+import { keyboardClick } from './mechanicalSounds'
 
 export type SoundKind = 'click' | 'paper' | 'insert' | 'print' | 'success'
 
@@ -8,7 +7,7 @@ export class SoundPlayer {
   private context: AudioContext | null = null
   private output: GainNode | null = null
   private noise: AudioBuffer | null = null
-  private mechanical = new Map<'click' | 'print', AudioBuffer>()
+  private clickBuffer: AudioBuffer | null = null
   private voices = new Set<AudioScheduledSourceNode>()
   private lastPaper = -Infinity
 
@@ -73,17 +72,15 @@ export class SoundPlayer {
     source.stop(now+duration+.01)
   }
 
-  private playMechanical(audio: AudioContext, kind: 'click' | 'print') {
-    let buffer = this.mechanical.get(kind)
-    if (!buffer) {
-      const samples = kind === 'click' ? keyboardClick(audio.sampleRate) : thermalPrinter(audio.sampleRate, PRINT_DURATION / 1000)
-      buffer = audio.createBuffer(1, samples.length, audio.sampleRate)
-      buffer.getChannelData(0).set(samples)
-      this.mechanical.set(kind, buffer)
+  private playClick(audio: AudioContext) {
+    if (!this.clickBuffer) {
+      const samples = keyboardClick(audio.sampleRate)
+      this.clickBuffer = audio.createBuffer(1, samples.length, audio.sampleRate)
+      this.clickBuffer.getChannelData(0).set(samples)
     }
     const source = audio.createBufferSource()
-    source.buffer = buffer
-    if (kind === 'click') source.playbackRate.value = .97 + Math.random() * .06
+    source.buffer = this.clickBuffer
+    source.playbackRate.value = .97 + Math.random() * .06
     source.connect(this.output!)
     this.track(source, [])
     source.start(audio.currentTime)
@@ -99,11 +96,22 @@ export class SoundPlayer {
       }
       const audio = this.audio(), now = audio.currentTime
       if (kind === 'click') {
-        this.playMechanical(audio, kind)
+        this.playClick(audio)
       } else if (kind === 'paper') {
         this.rustle(audio, true)
       } else if (kind === 'print') {
-        this.playMechanical(audio, kind)
+        const motor = audio.createOscillator(), gain = audio.createGain()
+        motor.type = 'triangle'
+        motor.frequency.setValueAtTime(78, now)
+        motor.frequency.linearRampToValueAtTime(94, now+2.6)
+        gain.gain.setValueAtTime(0, now)
+        gain.gain.linearRampToValueAtTime(.04, now+.08)
+        gain.gain.setValueAtTime(.04, now+2.65)
+        gain.gain.linearRampToValueAtTime(0, now+2.9)
+        motor.connect(gain).connect(this.output!)
+        this.track(motor, [gain])
+        motor.start(now)
+        motor.stop(now+3)
       } else {
         const notes = kind === 'success' ? [523.25, 659.25, 783.99] : [135, 105]
         notes.forEach((frequency, i) => this.tone(audio, frequency, frequency, now+i*.1, .25, .085))
@@ -129,6 +137,6 @@ export class SoundPlayer {
     this.context = null
     this.output = null
     this.noise = null
-    this.mechanical.clear()
+    this.clickBuffer = null
   }
 }
