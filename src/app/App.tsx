@@ -55,7 +55,7 @@ export default function App() {
   const [saveError, setSaveError] = useState('')
   const [fileOver, setFileOver] = useState(false)
   const [dragHint, setDragHint] = useState<DragHint>('idle')
-  const [sound, setSound] = useState(false)
+  const [sound, setSound] = useState(true)
   const [booted, setBooted] = useState(false)
   const [loadProgress, setLoadProgress] = useState(0)
   const [fallback, setFallback] = useState(false)
