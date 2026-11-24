@@ -130,8 +130,6 @@ class TerminalScene {
   private stack: CouponBox
   private drawer = new UsedCouponDrawer()
   private browserFocus = 0
-  private keypadFocus = 0
-  private keypadFocused = false
   private instructionFocus = 0
   private instructions = new THREE.Group()
   private instructionPaper = instructionCard()
@@ -317,9 +315,6 @@ class TerminalScene {
     this.observer.observe(host)
     this.props.scrollRoot.current?.addEventListener('scroll', this.scroll, { passive: true })
     this.props.scrollRoot.current?.addEventListener('wheel', this.leaveCloseup, { passive: true })
-    this.props.keypad.current?.addEventListener('click', this.focusKeypad, true)
-    this.props.keypad.current?.addEventListener('pointerup', this.keypadPointerUp, true)
-    this.props.keypad.current?.addEventListener('keydown', this.keypadKey)
     this.resize()
   }
 
@@ -391,25 +386,8 @@ class TerminalScene {
   }
 
   private leaveCloseup = () => {
-    this.keypadFocused = false
     if (this.props.browserOpen) this.props.onCloseBrowse()
     if (this.props.instructionOpen) this.props.onCloseInstructions()
-  }
-
-  private focusKeypad = (event: MouseEvent) => {
-    if (!this.layout?.compact || !this.near || this.props.disabled || this.keypadFocus > .9 || event.detail === 0) return
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    this.keypadFocused = true
-  }
-
-  private keypadPointerUp = () => {
-    if (this.dragging || this.touch) return
-    if (this.layout?.compact && this.near && !this.props.disabled && this.keypadFocus < .9) this.keypadFocused = true
-  }
-
-  private keypadKey = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') this.keypadFocused = false
   }
 
   private positionCamera() {
@@ -422,8 +400,6 @@ class TerminalScene {
     this.camera.position.lerp(layout.drawerPosition, drawerTravel)
     this.targetView.lerp(layout.drawerTarget, drawerTravel)
     if (this.progress > .43 && this.progress < .66) {
-      this.camera.position.lerp(layout.keypadCamera, this.keypadFocus)
-      this.targetView.lerp(layout.keypadTarget, this.keypadFocus)
       this.camera.position.lerp(layout.browsePosition, this.browserFocus)
       this.targetView.lerp(layout.browseTarget, this.browserFocus)
       this.camera.position.lerp(layout.instructionCamera, this.instructionFocus)
@@ -564,7 +540,6 @@ class TerminalScene {
   }
 
   update(props: SceneProps) {
-    if (props.browserOpen || props.instructionOpen || props.phase === 'inserting' || props.coupon?.src !== this.props.coupon?.src) this.keypadFocused = false
     if (props.usedCoupons !== this.props.usedCoupons) this.drawer.setEntries(props.usedCoupons)
     if (props.receipt?.id !== this.props.receipt?.id) this.printer.setReceipt(props.receipt)
     if (props.coupon?.src !== this.props.coupon?.src) this.setCoupon(props.coupon)
@@ -640,7 +615,6 @@ class TerminalScene {
   private down = (event: PointerEvent) => {
     if (event.button !== 0 || this.touch || this.dragging) return
     this.aim(event)
-    this.keypadFocused = false
     if (this.props.instructionOpen) {
       const close = !this.raycaster.intersectObject(this.instructions, true).length
       if (event.pointerType === 'touch') this.beginTouch(event, close ? this.props.onCloseInstructions : null)
@@ -822,12 +796,9 @@ class TerminalScene {
       this.props.reducedMotion || Math.abs(value - target) < .001 ? target : THREE.MathUtils.damp(value, target, speed, delta)
     const browserFocus = approach(this.browserFocus, Number(this.props.browserOpen), 7)
     const instructionFocus = approach(this.instructionFocus, Number(this.props.instructionOpen), 6)
-    const keypadFocus = approach(this.keypadFocus, Number(this.keypadFocused && this.layout?.compact), 7)
-    const moved = browserFocus !== this.browserFocus || instructionFocus !== this.instructionFocus || keypadFocus !== this.keypadFocus
+    const moved = browserFocus !== this.browserFocus || instructionFocus !== this.instructionFocus
     this.browserFocus = browserFocus
     this.instructionFocus = instructionFocus
-    this.keypadFocus = keypadFocus
-    if (this.props.keypad.current) this.props.keypad.current.dataset.focused = String(this.keypadFocused)
     if (this.progress !== this.scrollTarget && !this.dragging) {
       this.progress = approach(this.progress, this.scrollTarget, 11)
       this.positionCamera()
@@ -906,9 +877,6 @@ class TerminalScene {
     this.observer.disconnect()
     this.props.scrollRoot.current?.removeEventListener('scroll', this.scroll)
     this.props.scrollRoot.current?.removeEventListener('wheel', this.leaveCloseup)
-    this.props.keypad.current?.removeEventListener('click', this.focusKeypad, true)
-    this.props.keypad.current?.removeEventListener('pointerup', this.keypadPointerUp, true)
-    this.props.keypad.current?.removeEventListener('keydown', this.keypadKey)
     const canvas = this.renderer.domElement
     canvas.removeEventListener('pointerdown', this.down)
     canvas.removeEventListener('pointermove', this.move)

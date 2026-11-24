@@ -84,14 +84,11 @@ export function getSceneLayout(width: number, height: number) {
   const drawerTarget = new THREE.Vector3(DRAWER_X + (portrait ? 0 : .52), -3.13, 4.96)
   const instructionDistance = instructionScale / (2 * halfHeight) *
     Math.max(INSTRUCTION_WIDTH / (aspect * .86), INSTRUCTION_DEPTH / .76)
-  const keypadTarget = keypadPosition.clone().add(new THREE.Vector3(0, .08, .04))
-  const keypadDistance = Math.max(2.83 * keypadScale / (2 * halfHeight * aspect * .86), 1.72 * keypadScale / (2 * halfHeight * .70))
   return {
     compact, portrait, machineX, machinePosition, stackPosition, stackScale, printerPosition, printerScale, keypadPosition, keypadScale,
     keypadBounds,
     rackControlsWidth: compact ? Math.min(216, width - 64) * (2 * halfHeight * browseDistance) / (height * stackScale) : 1.15,
     rackControlsDepth: compact ? 40 * (2 * halfHeight * browseDistance) / (height * browseAxis.y * stackScale) : .28,
-    keypadTarget, keypadCamera: keypadTarget.clone().add(new THREE.Vector3(0, .882, .471).multiplyScalar(keypadDistance)),
     nearPosition: nearTarget.clone().addScaledVector(direction, distance), nearTarget,
     browsePosition: browseTarget.clone().addScaledVector(browseAxis, browseDistance),
     browseTarget,
@@ -122,8 +119,7 @@ export function grassCameraCoverage(): GrassCoverage[] {
         ? [[layout.farPosition, layout.farTarget], [layout.nearPosition, layout.nearTarget]]
         : view === 'drawer' ? [[layout.nearPosition, layout.nearTarget], [layout.drawerPosition, layout.drawerTarget]]
           : [[layout.nearPosition, layout.nearTarget], [layout.drawerPosition, layout.drawerTarget],
-            [layout.browsePosition, layout.browseTarget], [layout.instructionCamera, layout.instructionPosition],
-            [layout.keypadCamera, layout.keypadTarget]])
+            [layout.browsePosition, layout.browseTarget], [layout.instructionCamera, layout.instructionPosition]])
       const eye = new THREE.Vector3()
       const axis = new THREE.Vector3()
       const directions = cameras.map(([position, target]) => {
