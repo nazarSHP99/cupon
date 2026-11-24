@@ -25,7 +25,7 @@ export function CouponBrowser({ fallback, rackControls, activeIndex, onActiveInd
     const frame = requestAnimationFrame(() => previousButton.current?.focus({ preventScroll: true }))
     return () => {
       cancelAnimationFrame(frame)
-      if (previous?.isConnected) requestAnimationFrame(() => previous.focus())
+      if (previous?.isConnected) requestAnimationFrame(() => previous.focus({ preventScroll: true }))
     }
   }, [])
 

@@ -1,7 +1,9 @@
 import * as THREE from 'three'
-import { COUPON_BOX_DEPTH, COUPON_BOX_WIDTH, COUPON_PREVIEW_X } from './terminal/CouponBox'
+import { COUPON_BOX_DEPTH, COUPON_BOX_WIDTH, COUPON_PREVIEW_X, couponBoxViewPoints } from './terminal/CouponBox'
 import { DRAWER_WIDTH, DRAWER_X } from './terminal/UsedCouponDrawer'
 import { INSTRUCTION_DEPTH, INSTRUCTION_WIDTH } from './terminal/InstructionCard'
+
+import type { GrassCoverage } from './meadow/grassCoverage'
 
 const FOV = 39
 const up = new THREE.Vector3(0, 1, 0)
@@ -10,7 +12,8 @@ export const TABLE_WIDTH = 11.6
 export const TABLE_DEPTH = 7
 
 export function getSceneLayout(width: number, height: number) {
-  const portrait = width < 760 && height > width * 0.8
+  const compact = width <= 820
+  const portrait = compact && height > width * .8
   const aspect = width / height
   const machineX = portrait ? 0.81 : 2.18
   const stackPosition = new THREE.Vector3(portrait ? -1.66 : -3.40, -2.225, 1.32)
@@ -51,15 +54,30 @@ export function getSceneLayout(width: number, height: number) {
   fit([instructionPosition.x - instructionHalfWidth, -2.24, 1.05],
     [instructionPosition.x + instructionHalfWidth, -2.2, 3.4])
   const farDistance = Math.max(34, Math.min(70, 30 / aspect))
-  const browseSpan = (COUPON_BOX_WIDTH + Math.abs(COUPON_PREVIEW_X)) * stackScale
-  const browseDistance = Math.max(7.2, browseSpan / (2 * halfHeight * aspect * .83))
-  const browseTarget = stackPosition.clone().add(new THREE.Vector3(COUPON_PREVIEW_X * stackScale / 2, .92 * stackScale, .02))
+  const browseSpan = (COUPON_BOX_WIDTH + (portrait ? 0 : Math.abs(COUPON_PREVIEW_X))) * stackScale
+  let browseDistance = Math.max(portrait ? 4.5 * stackScale / (2 * halfHeight * .78) : 7.2, browseSpan / (2 * halfHeight * aspect * (portrait ? .88 : .83)))
+  const browseTarget = stackPosition.clone().add(new THREE.Vector3(portrait ? 0 : COUPON_PREVIEW_X * stackScale / 2, (portrait ? 1.30 : .92) * stackScale, portrait ? -.45 : .02))
+  if (portrait) {
+    const browseAxis = new THREE.Vector3(0, .8, .6), browseUp = new THREE.Vector3(0, .6, -.8)
+    const verticalMargin = Math.min(.8, Math.max(.5, 1 - 160 / height))
+    for (const point of couponBoxViewPoints(true)) {
+      point.multiplyScalar(stackScale).add(stackPosition).sub(browseTarget)
+      browseDistance = Math.max(browseDistance, point.dot(browseAxis) + Math.max(
+        Math.abs(point.x) / (halfHeight * aspect * .88), Math.abs(point.dot(browseUp)) / (halfHeight * verticalMargin),
+      ))
+    }
+  }
   const drawerDistance = Math.max(8.8, (DRAWER_WIDTH + .85) / (2 * halfHeight * aspect * .9))
   const drawerTarget = new THREE.Vector3(DRAWER_X + (portrait ? 0 : .52), -3.13, 4.96)
   const instructionDistance = instructionScale / (2 * halfHeight) *
     Math.max(INSTRUCTION_WIDTH / (aspect * .86), INSTRUCTION_DEPTH / .76)
+  const keypadTarget = keypadPosition.clone().add(new THREE.Vector3(0, .08, .04))
+  const keypadDistance = Math.max(2.83 * keypadScale / (2 * halfHeight * aspect * .86), 1.72 * keypadScale / (2 * halfHeight * .70))
   return {
-    portrait, machineX, stackPosition, stackScale, printerPosition, printerScale, keypadPosition, keypadScale,
+    compact, portrait, machineX, stackPosition, stackScale, printerPosition, printerScale, keypadPosition, keypadScale,
+    rackControlsWidth: portrait ? Math.min(216, width - 64) * (2 * halfHeight * browseDistance) / (height * stackScale) : 1.15,
+    rackControlsDepth: portrait ? 40 * (2 * halfHeight * browseDistance) / (height * .8 * stackScale) : .28,
+    keypadTarget, keypadCamera: keypadTarget.clone().add(new THREE.Vector3(0, .882, .471).multiplyScalar(keypadDistance)),
     nearPosition: nearTarget.clone().addScaledVector(direction, distance), nearTarget,
     browsePosition: browseTarget.clone().add(new THREE.Vector3(0, browseDistance * .8, browseDistance * .6)),
     browseTarget,
@@ -76,4 +94,38 @@ export function getSceneLayout(width: number, height: number) {
 
 export function sceneCamera() {
   return new THREE.PerspectiveCamera(FOV, 1, 0.12, 210)
+}
+
+export function grassCameraCoverage(): GrassCoverage[] {
+  const cones: GrassCoverage[] = []
+  // Cover phone, tablet, desktop and their intermediate aspect ratios together.
+  const ratios = [.2, .3, .5, .8, 1.176470588, 1.2, 2, 4]
+  for (const widths of [[320, 560, 820], [1024]]) for (let i = 1; i < ratios.length; i++) {
+    if (widths[0] > 820 && ratios[i - 1] < .5) continue
+    const layouts = widths.flatMap(width => [ratios[i - 1], ratios[i]].map(aspect => getSceneLayout(width, width / aspect)))
+    for (const view of ['overview', 'drawer', 'focus'] as const) {
+      const cameras = layouts.flatMap(layout => view === 'overview'
+        ? [[layout.farPosition, layout.farTarget], [layout.nearPosition, layout.nearTarget]]
+        : view === 'drawer' ? [[layout.nearPosition, layout.nearTarget], [layout.drawerPosition, layout.drawerTarget]]
+          : [[layout.nearPosition, layout.nearTarget], [layout.drawerPosition, layout.drawerTarget],
+            [layout.browsePosition, layout.browseTarget], [layout.instructionCamera, layout.instructionPosition],
+            [layout.keypadCamera, layout.keypadTarget]])
+      const eye = new THREE.Vector3()
+      const axis = new THREE.Vector3()
+      const directions = cameras.map(([position, target]) => {
+        eye.add(position)
+        const direction = target.clone().sub(position).normalize()
+        axis.add(direction)
+        return direction
+      })
+      eye.divideScalar(cameras.length)
+      axis.normalize()
+      const eyeRadius = Math.max(...cameras.map(([position]) => position.distanceTo(eye))) + 2
+      const spread = Math.max(...directions.map(direction => axis.angleTo(direction)))
+      // The diagonal FOV includes the shifted mobile viewport, plus a generous vertical margin.
+      const halfAngle = spread + Math.atan(Math.tan(THREE.MathUtils.degToRad(FOV / 2)) * Math.hypot(ratios[i], 1.2))
+      cones.push({ eye: eye.toArray(), eyeRadius, axis: axis.toArray(), halfAngle })
+    }
+  }
+  return cones
 }

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
-import type { Coupon } from '../coupons/coupon'
+import { DEMO_COUPONS, type Coupon } from '../coupons/coupon'
 import { PRINT_DURATION, type Receipt } from '../coupons/receipt'
-import { getSceneLayout, sceneCamera } from './sceneLayout'
+import { getSceneLayout, grassCameraCoverage, sceneCamera } from './sceneLayout'
 import { COUPON_BOX_DEPTH, CouponBox } from './terminal/CouponBox'
 import { couponPaper } from './terminal/couponPaper'
 import { UsedCouponDrawer } from './terminal/UsedCouponDrawer'
@@ -43,6 +43,7 @@ interface SceneProps {
   instructionOpen: boolean
   onCloseInstructions: () => void
   onReady: (fallback?: boolean) => void
+  onProgress: (progress: number) => void
   onApproach: (near: boolean) => void
   disabled: boolean
 }
@@ -128,6 +129,8 @@ class TerminalScene {
   private stack: CouponBox
   private drawer = new UsedCouponDrawer()
   private browserFocus = 0
+  private keypadFocus = 0
+  private keypadFocused = false
   private instructionFocus = 0
   private instructions = new THREE.Group()
   private instructionPaper = instructionCard()
@@ -144,6 +147,8 @@ class TerminalScene {
   private card: THREE.Group | null = null
   private display: LedDisplay
   private assets: Promise<void>
+  private textureProgress = 0
+  private meadowProgress = 0
   private compiling: Promise<unknown> | null = null
   private reportedReady = false
   private shadowDirty = true
@@ -159,7 +164,7 @@ class TerminalScene {
   private controlTransforms = new WeakMap<HTMLElement, string>()
   private viewport = new THREE.Matrix4()
   private rackPlane = new THREE.Matrix4()
-  private touch: { id: number; start: number; last: number; moved: boolean; demo: THREE.Object3D | null } | null = null
+  private touch: { id: number; start: number; startX: number; last: number; moved: boolean; action: (() => void) | null } | null = null
   private light: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>
   private observer: ResizeObserver
   private animation = 0
@@ -190,7 +195,7 @@ class TerminalScene {
     this.renderer.domElement.setAttribute('aria-label', 'Купоноприймач, принтер чеків і демокупони на столі. Натисни на купон, щоб обрати. Перетягни його до приймача або скористайся кнопкою. Після активації принтер надрукує чек.')
     this.renderer.domElement.setAttribute('role', 'img')
     this.host.appendChild(this.renderer.domElement)
-    this.meadow = new Meadow(host.clientWidth < 760, this.transmissionFrustum)
+    this.meadow = new Meadow(host.clientWidth < 760, this.transmissionFrustum, grassCameraCoverage())
     this.scene.fog = new THREE.Fog('#c6b6c9', MEADOW_FOG_NEAR, MEADOW_FOG_FAR)
     this.scene.add(this.meadow)
     this.scene.add(new THREE.HemisphereLight('#e9e3fa', '#9b9d78', 1.55))
@@ -261,7 +266,13 @@ class TerminalScene {
     for (let i = 0; i < 6; i++) box(this.machine, [0.02, 0.045, 0.54], [1.645, -0.86 + i * 0.13, -0.07], '#9da78f', 0.009)
 
     const manager = new THREE.LoadingManager()
-    this.assets = new Promise<void>(resolve => { manager.onLoad = resolve })
+    manager.onProgress = (_url, loaded, total) => {
+      this.textureProgress = loaded / Math.max(1, total)
+      this.reportProgress()
+    }
+    this.assets = new Promise<void>(resolve => {
+      manager.onLoad = () => { this.textureProgress = 1; this.reportProgress(); resolve() }
+    })
     this.stack = new CouponBox(manager)
     this.drawer.setEntries(props.usedCoupons)
     this.instructions.add(this.instructionPaper)
@@ -296,22 +307,36 @@ class TerminalScene {
     this.observer = new ResizeObserver(this.resize)
     this.observer.observe(host)
     this.props.scrollRoot.current?.addEventListener('scroll', this.scroll, { passive: true })
+    this.props.scrollRoot.current?.addEventListener('wheel', this.leaveCloseup, { passive: true })
+    this.props.keypad.current?.addEventListener('click', this.focusKeypad, true)
+    this.props.keypad.current?.addEventListener('pointerup', this.keypadPointerUp, true)
+    this.props.keypad.current?.addEventListener('keydown', this.keypadKey)
     this.resize()
   }
 
   async start() {
-    await Promise.all([this.assets, this.meadow.prepare(() => this.destroyed)])
+    this.props.onProgress(5)
+    await Promise.all([this.assets, this.meadow.prepare(() => this.destroyed, progress => {
+      this.meadowProgress = progress
+      this.reportProgress()
+    })])
     if (this.destroyed) return
     this.meadow.update(this.camera, 0)
+    this.props.onProgress(88)
     this.compiling = this.renderer.compileAsync(this.scene, this.camera)
     try { await this.compiling }
     finally { this.compiling = null }
     if (this.destroyed) return
+    this.props.onProgress(94)
     this.compiling = this.prepareSceneResources()
     try { await this.compiling }
     finally { this.compiling = null }
     if (this.destroyed) return
     this.animation = requestAnimationFrame(this.frame)
+  }
+
+  private reportProgress() {
+    if (!this.destroyed) this.props.onProgress(5 + 15 * this.textureProgress + 65 * this.meadowProgress)
   }
 
   private async prepareSceneResources() {
@@ -329,7 +354,11 @@ class TerminalScene {
         object.visible = true
         object.frustumCulled = false
       })
-      this.meadow.prepareRenderLods(() => this.renderer.render(this.scene, this.camera))
+      let prepared = 0
+      this.meadow.prepareRenderLods(() => {
+        this.renderer.render(this.scene, this.camera)
+        this.props.onProgress(94 + ++prepared * 5 / 3)
+      })
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
     } finally {
       for (const { mesh, count, visible, culled } of grass) {
@@ -345,7 +374,32 @@ class TerminalScene {
   private scroll = () => {
     const root = this.props.scrollRoot.current
     if (!root) return
-    this.scrollTarget = THREE.MathUtils.clamp(root.scrollTop / Math.max(1, root.scrollHeight - root.clientHeight), 0, 1)
+    // A rotation can dispatch scroll before ResizeObserver restores the same checkpoint.
+    if (this.layout && Math.abs(root.clientHeight + this.viewport.elements[5] * 2) > 1) return
+    const progress = THREE.MathUtils.clamp(root.scrollTop / Math.max(1, root.scrollHeight - root.clientHeight), 0, 1)
+    if (Math.abs(progress - this.scrollTarget) > .003) this.leaveCloseup()
+    this.scrollTarget = progress
+  }
+
+  private leaveCloseup = () => {
+    this.keypadFocused = false
+    if (this.props.browserOpen) this.props.onCloseBrowse()
+    if (this.props.instructionOpen) this.props.onCloseInstructions()
+  }
+
+  private focusKeypad = (event: MouseEvent) => {
+    if (!this.layout?.compact || !this.near || this.props.disabled || this.keypadFocus > .9 || event.detail === 0) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    this.keypadFocused = true
+  }
+
+  private keypadPointerUp = () => {
+    if (this.layout?.compact && this.near && !this.props.disabled && this.keypadFocus < .9) this.keypadFocused = true
+  }
+
+  private keypadKey = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') this.keypadFocused = false
   }
 
   private positionCamera() {
@@ -357,11 +411,16 @@ class TerminalScene {
     const drawerTravel = ease(THREE.MathUtils.clamp((this.progress - .64) / .36, 0, 1))
     this.camera.position.lerp(layout.drawerPosition, drawerTravel)
     this.targetView.lerp(layout.drawerTarget, drawerTravel)
-    this.camera.position.lerp(layout.browsePosition, this.browserFocus)
-    this.targetView.lerp(layout.browseTarget, this.browserFocus)
-    this.camera.position.lerp(layout.instructionCamera, this.instructionFocus)
-    this.targetView.lerp(layout.instructionPosition, this.instructionFocus)
+    if (this.progress > .43 && this.progress < .66) {
+      this.camera.position.lerp(layout.keypadCamera, this.keypadFocus)
+      this.targetView.lerp(layout.keypadTarget, this.keypadFocus)
+      this.camera.position.lerp(layout.browsePosition, this.browserFocus)
+      this.targetView.lerp(layout.browseTarget, this.browserFocus)
+      this.camera.position.lerp(layout.instructionCamera, this.instructionFocus)
+      this.targetView.lerp(layout.instructionPosition, this.instructionFocus)
+    }
     this.camera.lookAt(this.targetView)
+    this.camera.clearViewOffset()
     this.camera.updateMatrixWorld()
     this.projectControl(this.props.keypad.current, this.keypad, keypadPlane)
     this.updateTransmissionFrustum()
@@ -413,13 +472,16 @@ class TerminalScene {
   private resize = () => {
     const { width, height } = this.host.getBoundingClientRect()
     if (!width || !height) return
+    const preserveJourney = this.layout !== null
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.4, Math.sqrt(2_250_000 / (width * height))))
     this.renderer.setSize(width, height)
     this.shadowDirty = true
     const layout = this.layout = getSceneLayout(width, height)
+    this.meadow.ensureViewport(width, height, () => this.destroyed)
     this.machine.position.x = layout.machineX
     this.stack.position.copy(layout.stackPosition)
     this.stack.scale.setScalar(layout.stackScale)
+    this.stack.setPortrait(layout.portrait)
     this.keypad.position.copy(layout.keypadPosition)
     this.keypad.scale.setScalar(layout.keypadScale)
     this.keypadBase.position.set(layout.keypadPosition.x, -2.24, layout.keypadPosition.z)
@@ -427,11 +489,11 @@ class TerminalScene {
     this.instructions.position.copy(layout.instructionPosition)
     this.instructions.scale.setScalar(layout.instructionScale)
     this.instructions.rotation.y = layout.instructionAngle
-    const controlsWidth = layout.portrait ? 2.48 : 1.15
+    const controlsWidth = layout.rackControlsWidth
     this.rackPlane.set(
       controlsWidth / 146, 0, 0, -controlsWidth / 2,
       0, 0, 1, .005,
-      0, (layout.portrait ? .88 : .28) / 42, 0, COUPON_BOX_DEPTH / 2 + .10,
+      0, layout.rackControlsDepth / 42, 0, COUPON_BOX_DEPTH / 2 + .10,
       0, 0, 0, 1,
     )
     this.printer.position.copy(layout.printerPosition)
@@ -456,6 +518,8 @@ class TerminalScene {
       0, 0, 1, 0,
       0, 0, 0, 1,
     )
+    const root = this.props.scrollRoot.current
+    if (preserveJourney && root) root.scrollTop = this.scrollTarget * Math.max(1, root.scrollHeight - root.clientHeight)
     this.scroll()
     this.positionCamera()
   }
@@ -475,6 +539,7 @@ class TerminalScene {
   }
 
   update(props: SceneProps) {
+    if (props.browserOpen || props.instructionOpen || props.phase === 'inserting' || props.coupon?.src !== this.props.coupon?.src) this.keypadFocused = false
     if (props.usedCoupons !== this.props.usedCoupons) this.drawer.setEntries(props.usedCoupons)
     if (props.receipt?.id !== this.props.receipt?.id) this.printer.setReceipt(props.receipt)
     if (props.coupon?.src !== this.props.coupon?.src) this.setCoupon(props.coupon)
@@ -509,19 +574,25 @@ class TerminalScene {
   private down = (event: PointerEvent) => {
     if (event.button !== 0 || this.touch || this.dragging) return
     this.aim(event)
+    this.keypadFocused = false
     if (this.props.instructionOpen) {
-      if (!this.raycaster.intersectObject(this.instructions, true).length) this.props.onCloseInstructions()
+      const close = !this.raycaster.intersectObject(this.instructions, true).length
+      if (event.pointerType === 'touch') this.beginTouch(event, close ? this.props.onCloseInstructions : null)
+      else if (close) this.props.onCloseInstructions()
       return
     }
     const enabled = this.near && !this.props.disabled && !this.props.browserOpen
     if (this.props.browserOpen) {
+      let action: (() => void) | null = null
       if (this.stack.isPreviewAtPointer(this.raycaster)) {
-        if (this.browserFocus > .75) this.props.onChooseDemo(this.props.activeCoupon)
+        if (this.browserFocus > .75) action = () => this.props.onChooseDemo(this.props.activeCoupon)
       } else {
         const index = this.browserFocus > .75 ? this.stack.couponIndexAtPointer(this.raycaster) : undefined
-        if (index !== undefined) this.props.onPreviewCoupon(index)
-        else if (!this.demoAtPointer()) this.props.onCloseBrowse()
+        if (index !== undefined) action = () => this.props.onPreviewCoupon(index)
+        else if (!this.demoAtPointer()) action = this.props.onCloseBrowse
       }
+      if (event.pointerType === 'touch') this.beginTouch(event, action)
+      else action?.()
       return
     }
     const cardHit = enabled && this.props.phase === 'ready' && this.card
@@ -529,8 +600,7 @@ class TerminalScene {
     if (!cardHit || !this.card) {
       const object = enabled ? this.demoAtPointer() : null
       if (event.pointerType === 'touch') {
-        this.touch = { id: event.pointerId, start: event.clientY, last: event.clientY, moved: false, demo: object }
-        this.renderer.domElement.setPointerCapture(event.pointerId)
+        this.beginTouch(event, object ? this.props.onBrowse : null)
       } else if (object) this.props.onBrowse()
       return
     }
@@ -546,19 +616,34 @@ class TerminalScene {
     this.props.onDragHint('dragging')
   }
 
+  private beginTouch(event: PointerEvent, action: (() => void) | null) {
+    this.touch = { id: event.pointerId, start: event.clientY, startX: event.clientX, last: event.clientY, moved: false, action }
+    this.renderer.domElement.setPointerCapture(event.pointerId)
+  }
+
   private move = (event: PointerEvent) => {
-    if (this.props.instructionOpen) {
-      this.renderer.domElement.dataset.cursor = 'default'
-      return
-    }
     if (this.touch?.id === event.pointerId) {
       const touch = this.touch
       const root = this.props.scrollRoot.current
-      if (root && !this.props.disabled && !this.props.browserOpen && (touch.moved || Math.abs(touch.start - event.clientY) > 7)) {
+      if (this.props.browserOpen && Math.abs(event.clientX - touch.startX) > 40 && Math.abs(event.clientX - touch.startX) > Math.abs(event.clientY - touch.start)) {
         touch.moved = true
+        const direction = event.clientX < touch.startX ? 1 : -1
+        this.props.onPreviewCoupon((this.props.activeCoupon + direction + DEMO_COUPONS.length) % DEMO_COUPONS.length)
+        touch.startX = event.clientX
+        touch.start = event.clientY
+        touch.last = event.clientY
+        return
+      }
+      if (root && !this.props.disabled && Math.abs(touch.start - event.clientY) > 7) {
+        touch.moved = true
+        this.leaveCloseup()
         root.scrollTop += (touch.last - event.clientY) * 1.85
         touch.last = event.clientY
       }
+      return
+    }
+    if (this.props.instructionOpen) {
+      this.renderer.domElement.dataset.cursor = 'default'
       return
     }
     this.aim(event)
@@ -634,10 +719,10 @@ class TerminalScene {
   private cancel = (event: PointerEvent) => { this.release(event, true) }
   private release(event: PointerEvent, cancelled: boolean) {
     if (this.touch?.id === event.pointerId) {
-      const { moved, demo } = this.touch
+      const { moved, action } = this.touch
       this.touch = null
       if (this.renderer.domElement.hasPointerCapture(event.pointerId)) this.renderer.domElement.releasePointerCapture(event.pointerId)
-      if (demo && !cancelled && !moved && this.near && !this.props.disabled) this.props.onBrowse()
+      if (!cancelled && !moved && this.near && !this.props.disabled) action?.()
       return
     }
     if (!this.dragging) return
@@ -658,9 +743,12 @@ class TerminalScene {
       this.props.reducedMotion || Math.abs(value - target) < .001 ? target : THREE.MathUtils.damp(value, target, speed, delta)
     const browserFocus = approach(this.browserFocus, Number(this.props.browserOpen), 7)
     const instructionFocus = approach(this.instructionFocus, Number(this.props.instructionOpen), 6)
-    const moved = browserFocus !== this.browserFocus || instructionFocus !== this.instructionFocus
+    const keypadFocus = approach(this.keypadFocus, Number(this.keypadFocused && this.layout?.compact), 7)
+    const moved = browserFocus !== this.browserFocus || instructionFocus !== this.instructionFocus || keypadFocus !== this.keypadFocus
     this.browserFocus = browserFocus
     this.instructionFocus = instructionFocus
+    this.keypadFocus = keypadFocus
+    if (this.props.keypad.current) this.props.keypad.current.dataset.focused = String(this.keypadFocused)
     if (this.progress !== this.scrollTarget && !this.dragging) {
       this.progress = approach(this.progress, this.scrollTarget, 11)
       this.positionCamera()
@@ -709,6 +797,10 @@ class TerminalScene {
         card.rotation.z = THREE.MathUtils.damp(card.rotation.z, this.over ? 0 : -0.055, 10, delta)
       } else {
         this.target.copy(rest)
+        if (this.layout?.compact) {
+          this.target.y = THREE.MathUtils.lerp(rest.y, .4, this.keypadFocus)
+          this.target.z = THREE.MathUtils.lerp(rest.z, 1.35, this.keypadFocus)
+        }
         if (!this.props.reducedMotion) this.target.y += Math.sin(this.clock * 1.6) * 0.045
         card.position.lerp(this.target, 1 - Math.exp(-9 * delta))
         card.rotation.x = THREE.MathUtils.damp(card.rotation.x, -0.07, 8, delta)
@@ -722,6 +814,7 @@ class TerminalScene {
     this.renderer.render(this.scene, this.camera)
     if (!this.reportedReady) {
       this.reportedReady = true
+      this.props.onProgress(100)
       this.props.onReady()
     }
     this.animation = requestAnimationFrame(this.frame)
@@ -733,6 +826,10 @@ class TerminalScene {
     cancelAnimationFrame(this.animation)
     this.observer.disconnect()
     this.props.scrollRoot.current?.removeEventListener('scroll', this.scroll)
+    this.props.scrollRoot.current?.removeEventListener('wheel', this.leaveCloseup)
+    this.props.keypad.current?.removeEventListener('click', this.focusKeypad, true)
+    this.props.keypad.current?.removeEventListener('pointerup', this.keypadPointerUp, true)
+    this.props.keypad.current?.removeEventListener('keydown', this.keypadKey)
     const canvas = this.renderer.domElement
     canvas.removeEventListener('pointerdown', this.down)
     canvas.removeEventListener('pointermove', this.move)

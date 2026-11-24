@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { GrassField, grassGroundMaterial, meadowGroundTexture } from './GrassField'
-import { generateMeadowData, type MeadowData } from './meadowData'
+import { generateMeadowData, MEADOW_TILE_COUNT, type MeadowData, type MeadowWorkerMessage } from './meadowData'
 import { wildflowers } from './Wildflowers'
+import type { GrassCoverage } from './grassCoverage'
 
 const sun = new THREE.Vector3(-15, 12, 8).normalize()
 
@@ -76,14 +77,23 @@ export class Meadow extends THREE.Group {
   private dome = sky()
   private grass: GrassField | null = null
   private cancelBuild: (() => void) | null = null
+  private tileKeys = new Set<string>()
+  private unrestricted = false
+  private prepared = false
+  private expanding = false
 
-  constructor(private compact: boolean, private transmissionFrustum: THREE.Frustum) {
+  constructor(private compact: boolean, private transmissionFrustum: THREE.Frustum, private coverage: GrassCoverage[]) {
     super()
     this.add(this.dome)
   }
 
-  async prepare(cancelled: () => boolean) {
-    const [map, data] = await Promise.all([meadowGroundTexture(), this.buildData(cancelled)])
+  async prepare(cancelled: () => boolean, onProgress: (progress: number) => void) {
+    let textureReady = false, generated = 0
+    const report = () => onProgress(Number(textureReady) * .08 + generated * .87)
+    const [map, data] = await Promise.all([
+      meadowGroundTexture().then(texture => { textureReady = true; report(); return texture }),
+      this.buildData(cancelled, progress => { generated = progress; report() }),
+    ])
     if (cancelled() || !data) { map.dispose(); return }
     const ground = new THREE.BufferGeometry()
     ground.setAttribute('position', new THREE.BufferAttribute(data.ground.position, 3))
@@ -98,18 +108,27 @@ export class Meadow extends THREE.Group {
     this.grass = new GrassField(this.compact, this.transmissionFrustum)
     this.add(this.grass)
     this.grass.prepare(data.tiles)
+    for (const tile of data.tiles) this.tileKeys.add(`${tile.detailed}:${tile.centerX}:${tile.centerZ}`)
     if (!cancelled()) this.add(wildflowers(this.compact))
+    this.prepared = true
+    if (this.unrestricted) await this.expandCoverage(cancelled)
+    onProgress(1)
   }
 
-  private async buildData(cancelled: () => boolean): Promise<MeadowData | null> {
+  private async buildData(cancelled: () => boolean, onProgress: (progress: number) => void, coverage = this.unrestricted ? [] : this.coverage): Promise<MeadowData | null> {
     try {
       return await new Promise<MeadowData | null>((resolve, reject) => {
         const worker = new Worker(new URL('./meadow.worker.ts', import.meta.url), { type: 'module' })
         this.cancelBuild = () => { worker.terminate(); resolve(null) }
-        worker.onmessage = (event: MessageEvent<MeadowData>) => {
+        worker.onmessage = (event: MessageEvent<MeadowWorkerMessage>) => {
+          if (event.data.type === 'progress') {
+            onProgress(event.data.completed / MEADOW_TILE_COUNT)
+            return
+          }
           worker.terminate()
           this.cancelBuild = null
-          resolve(event.data)
+          onProgress(1)
+          resolve(event.data.data)
         }
         worker.onerror = event => {
           event.preventDefault()
@@ -117,18 +136,20 @@ export class Meadow extends THREE.Group {
           this.cancelBuild = null
           reject(new Error('Meadow worker unavailable'))
         }
-        worker.postMessage(this.compact)
+        worker.postMessage({ compact: this.compact, coverage })
       })
     } catch {
       // Keep the scene usable in browsers that prevent workers from starting.
       if (cancelled()) return null
-      const generation = generateMeadowData(this.compact)
+      const generation = generateMeadowData(this.compact, coverage)
       const tiles: MeadowData['tiles'] = []
+      let completed = 0
       let deadline = performance.now() + 7
       let result = generation.next()
       while (!result.done) {
         if (cancelled()) return null
-        tiles.push(result.value)
+        if (result.value) tiles.push(result.value)
+        onProgress(++completed / MEADOW_TILE_COUNT)
         if (performance.now() > deadline) {
           await timeSlice()
           deadline = performance.now() + 7
@@ -137,6 +158,25 @@ export class Meadow extends THREE.Group {
       }
       return { ground: result.value, tiles }
     }
+  }
+
+  ensureViewport(width: number, height: number, cancelled: () => boolean) {
+    // Very unusual window shapes retain the entire field rather than risk a missing edge.
+    if (width >= 320 && width / height >= (width > 820 ? .5 : .2) && width / height <= 4 && height >= 160) return
+    this.unrestricted = true
+    if (this.prepared) void this.expandCoverage(cancelled)
+  }
+
+  private async expandCoverage(cancelled: () => boolean) {
+    if (this.expanding || this.tileKeys.size === MEADOW_TILE_COUNT) return
+    this.expanding = true
+    try {
+      const data = await this.buildData(cancelled, () => {}, [])
+      if (!data || cancelled()) return
+      const missing = data.tiles.filter(tile => !this.tileKeys.has(`${tile.detailed}:${tile.centerX}:${tile.centerZ}`))
+      this.grass?.prepare(missing)
+      for (const tile of missing) this.tileKeys.add(`${tile.detailed}:${tile.centerX}:${tile.centerZ}`)
+    } finally { this.expanding = false }
   }
 
   cancelPreparation() {

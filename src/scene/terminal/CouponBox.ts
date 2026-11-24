@@ -14,6 +14,21 @@ const CARD_BASE_Y = .12
 const SLOT_SPACING = .11
 const CARD_CENTER_Y = CARD_BASE_Y + Math.cos(CARD_LEAN) * CARD_HEIGHT / 2
 
+function previewPosition(portrait: boolean) {
+  return new THREE.Vector3(portrait ? 0 : COUPON_PREVIEW_X, CARD_CENTER_Y + (portrait ? 1.55 : .53), portrait ? -1.95 : .04)
+}
+
+export function couponBoxViewPoints(portrait: boolean) {
+  const points: THREE.Vector3[] = []
+  for (const x of [-COUPON_BOX_WIDTH / 2, COUPON_BOX_WIDTH / 2]) {
+    for (const y of [0, CARD_BASE_Y + CARD_HEIGHT + .12]) for (const z of [-COUPON_BOX_DEPTH / 2, COUPON_BOX_DEPTH / 2]) points.push(new THREE.Vector3(x, y, z))
+  }
+  for (const x of [-CARD_WIDTH / 2, CARD_WIDTH / 2]) for (const y of [-CARD_HEIGHT / 2, CARD_HEIGHT / 2]) {
+    points.push(new THREE.Vector3(x, y, .025).applyAxisAngle(new THREE.Vector3(1, 0, 0), -.76).add(previewPosition(portrait)))
+  }
+  return points
+}
+
 export class CouponBox extends THREE.Group {
   private cards: THREE.Group[] = []
   private faces: THREE.MeshStandardMaterial[] = []
@@ -85,7 +100,7 @@ export class CouponBox extends THREE.Group {
     this.add(this.frontSlot)
 
     this.previewFace = addCard(this.preview, this.faces[0])
-    this.preview.position.set(COUPON_PREVIEW_X, CARD_CENTER_Y + .53, .04)
+    this.preview.position.copy(previewPosition(false))
     this.preview.rotation.x = -.76
     this.preview.visible = false
     this.add(this.preview)
@@ -109,6 +124,11 @@ export class CouponBox extends THREE.Group {
       card.position.y = THREE.MathUtils.lerp(card.position.y, targetY, blend)
     })
     return changed
+  }
+
+  setPortrait(portrait: boolean) {
+    // Keep the physical coupon above the rack when a narrow frame cannot fit it beside the rack.
+    this.preview.position.copy(previewPosition(portrait))
   }
 
   couponIndexAtPointer(raycaster: THREE.Raycaster): number | undefined {

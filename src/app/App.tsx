@@ -14,33 +14,15 @@ import type { DragHint, Phase } from '../scene/MachineScene'
 
 const MachineScene = lazy(() => import('../scene/MachineScene'))
 
-function BootMachine({ ready }: { ready: boolean }) {
-  return <div className={`boot ${ready ? 'boot--done' : ''}`} role="status" aria-hidden={ready}>
-    <div className="boot-panel">
-      <div className="boot-machine" aria-hidden="true">
-        <svg viewBox="0 0 144 176" width="144" height="176">
-          <rect x="28" y="12" width="88" height="112" rx="16" fill="#f5f0df" stroke="#333b30" strokeWidth="2" />
-          <rect x="39" y="26" width="66" height="30" rx="6" fill="#e6edce" stroke="#333b30" strokeWidth="2" />
-          <path d="M61 42h2m18 0h2m-16 4q5 6 10 0" fill="none" stroke="#333b30" strokeWidth="2.25" strokeLinecap="round" />
-          <path d="M45 123v5m54-5v5" stroke="#333b30" strokeWidth="5" strokeLinecap="round" />
-        </svg>
-        <div className="boot-feed">
-          <svg className="boot-coupon" viewBox="0 0 62 42" width="62" height="42">
-            <path d="M7 1h48a6 6 0 0 1 6 6v8a6 6 0 0 0 0 12v8a6 6 0 0 1-6 6H7a6 6 0 0 1-6-6v-8a6 6 0 0 0 0-12V7a6 6 0 0 1 6-6Z" fill="#fbb797" stroke="#333b30" strokeWidth="2" />
-            <path d="M45 7v28" stroke="#333b30" strokeWidth="1.5" strokeDasharray="2 4" strokeLinecap="round" />
-            <path d="M23 10l2.9 7.1L33 20l-7.1 2.9L23 30l-2.9-7.1L13 20l7.1-2.9Z" fill="#333b30" />
-          </svg>
-        </div>
-        <svg className="boot-slot" viewBox="0 0 78 16" width="78" height="16">
-          <rect x="1" y="1" width="76" height="14" rx="5" fill="#e87552" stroke="#333b30" strokeWidth="2" />
-          <path d="M9 8h60" stroke="#333b30" strokeWidth="3" strokeLinecap="round" />
-        </svg>
-      </div>
-      <span className="sr-only">Запускаю автомат</span>
+function BootMachine({ ready, progress }: { ready: boolean; progress: number }) {
+  return <div className={`boot ${ready ? 'boot--done' : ''}`} aria-hidden={ready}>
+    <div className="boot-progress" role="progressbar" aria-label="Завантаження сцени"
+      aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+      <span style={{ transform: `scaleX(${progress / 100})` }} />
     </div>
+    <span className="boot-percent" aria-hidden="true">{progress}%</span>
   </div>
 }
-
 export default function App() {
   const [coupon, setCoupon] = useState<Coupon | null>(null)
   const [receipt, setReceipt] = useState<Receipt | null>(null)
@@ -53,6 +35,7 @@ export default function App() {
   const [dragHint, setDragHint] = useState<DragHint>('idle')
   const [sound, setSound] = useState(false)
   const [booted, setBooted] = useState(false)
+  const [loadProgress, setLoadProgress] = useState(0)
   const [fallback, setFallback] = useState(false)
   const [near, setNear] = useState(false)
   const [journeyProgress, setJourneyProgress] = useState(0)
@@ -78,8 +61,13 @@ export default function App() {
   const controlsActive = booted && (near || fallback) && !browserOpen && !instructionOpen && journeyProgress < .67
 
   const sceneReady = useCallback((webglUnavailable = false) => {
+    setLoadProgress(100)
     setFallback(webglUnavailable)
     setBooted(true)
+  }, [])
+
+  const sceneProgress = useCallback((value: number) => {
+    setLoadProgress(previous => Math.max(previous, Math.min(100, Math.round(value))))
   }, [])
 
   useEffect(() => { phaseRef.current = phase }, [phase])
@@ -267,7 +255,7 @@ export default function App() {
               onPreviewCoupon={setActiveCoupon} usedCoupons={entries}
               rackControls={rackControls} objectHint={objectHint} instructionButton={instructionButton} instructionOpen={instructionOpen}
               onCloseInstructions={closeInstructions}
-              scrollRoot={scrollRoot} keypad={keypad} onReady={sceneReady} onApproach={setNear} />
+              scrollRoot={scrollRoot} keypad={keypad} onReady={sceneReady} onProgress={sceneProgress} onApproach={setNear} />
           </Suspense>
         </div>
 
@@ -322,7 +310,7 @@ export default function App() {
       onActiveIndex={setActiveCoupon} onChoose={demo} onClose={closeLibrary} />}
     {instructionOpen && <InstructionReader fallback={fallback} onClose={closeInstructions} />}
     <CustomCursor />
-    <BootMachine ready={booted} />
+    <BootMachine ready={booted} progress={loadProgress} />
   </>
 }
 

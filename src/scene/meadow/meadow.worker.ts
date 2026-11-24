@@ -1,13 +1,15 @@
-import { generateMeadowData, meadowTransfers, type MeadowData } from './meadowData'
+import { generateMeadowData, meadowTransfers, type MeadowData, type MeadowRequest, type MeadowWorkerMessage } from './meadowData'
 
-self.onmessage = (event: MessageEvent<boolean>) => {
-  const generation = generateMeadowData(event.data)
+self.onmessage = (event: MessageEvent<MeadowRequest>) => {
+  const generation = generateMeadowData(event.data.compact, event.data.coverage)
   const tiles: MeadowData['tiles'] = []
+  let completed = 0
   let result = generation.next()
   while (!result.done) {
-    tiles.push(result.value)
+    if (result.value) tiles.push(result.value)
+    if (++completed % 8 === 0) self.postMessage({ type: 'progress', completed } satisfies MeadowWorkerMessage)
     result = generation.next()
   }
   const data: MeadowData = { ground: result.value, tiles }
-  self.postMessage(data, { transfer: meadowTransfers(data) })
+  self.postMessage({ type: 'complete', data } satisfies MeadowWorkerMessage, { transfer: meadowTransfers(data) })
 }

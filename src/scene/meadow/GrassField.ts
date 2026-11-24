@@ -186,6 +186,7 @@ export class GrassField extends THREE.Group {
       } else this.distantTiles.push(mesh)
       this.add(mesh)
     }
+    this.lastPosition.set(Infinity, Infinity, Infinity)
   }
 
   update(camera: THREE.Camera, time: number) {

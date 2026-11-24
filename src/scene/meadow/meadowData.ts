@@ -1,6 +1,7 @@
 import { Color, PlaneGeometry } from 'three'
 import { GRASS_PRESET } from './grassSettings'
 import { meadowRandom, meadowTurfColor, terrainHeight, TERRAIN_EXTENT } from './terrain'
+import { tileInCameraCoverage, type GrassCoverage } from './grassCoverage'
 
 export const GRASS_TILE = 8
 export const DISTANT_GRASS_TILE = 16
@@ -8,6 +9,7 @@ export const GRASS_EXTENT_X = 40
 export const GRASS_BACK = -32
 export const GRASS_FRONT = 88
 export const ROOT_HEIGHT_RANGE = 32
+export const MEADOW_TILE_COUNT = 294
 
 export interface GrassTileData {
   detailed: boolean
@@ -32,7 +34,13 @@ export interface MeadowData {
   tiles: GrassTileData[]
 }
 
-export function* generateMeadowData(compact: boolean): Generator<GrassTileData, GroundData> {
+export type MeadowWorkerMessage =
+  | { type: 'progress'; completed: number }
+  | { type: 'complete'; data: MeadowData }
+
+export interface MeadowRequest { compact: boolean; coverage: GrassCoverage[] }
+
+export function* generateMeadowData(compact: boolean, coverage: GrassCoverage[] = []): Generator<GrassTileData | null, GroundData> {
   const ground = new PlaneGeometry(TERRAIN_EXTENT * 2, TERRAIN_EXTENT * 2, 256, 256).rotateX(-Math.PI / 2)
   const vertices = ground.getAttribute('position')
   const colors = new Float32Array(vertices.count * 3)
@@ -50,13 +58,13 @@ export function* generateMeadowData(compact: boolean): Generator<GrassTileData, 
     color: colors,
     index: ground.index!.array as Uint32Array,
   }
-  yield* plantGrass(ground, colors, compact, true)
-  yield* plantGrass(ground, colors, compact, false)
+  yield* plantGrass(ground, colors, compact, true, coverage)
+  yield* plantGrass(ground, colors, compact, false, coverage)
   ground.dispose()
   return data
 }
 
-function* plantGrass(ground: PlaneGeometry, colors: Float32Array, compact: boolean, detailed: boolean): Generator<GrassTileData> {
+function* plantGrass(ground: PlaneGeometry, colors: Float32Array, compact: boolean, detailed: boolean, coverage: GrassCoverage[]): Generator<GrassTileData | null> {
   const random = meadowRandom(detailed ? 951847 : 715419)
   const positions = ground.getAttribute('position')
   const normals = ground.getAttribute('normal')
@@ -76,6 +84,24 @@ function* plantGrass(ground: PlaneGeometry, colors: Float32Array, compact: boole
     const centerX = x + tileSize / 2, centerZ = z + tileSize / 2
     const cells = Math.floor(tileSize * Math.sqrt(density))
     const count = cells * cells
+    if (coverage.length) {
+      let low = Infinity, high = -Infinity
+      // Every interpolated ground triangle lies between these vertex heights.
+      for (let iz = Math.floor((z + height / 2) / cellDepth); iz <= Math.min(heightSegments, Math.ceil((z + tileSize + height / 2) / cellDepth)); iz++) {
+        for (let ix = Math.floor((x + width / 2) / cellWidth); ix <= Math.min(widthSegments, Math.ceil((x + tileSize + width / 2) / cellWidth)); ix++) {
+          const y = positions.getY(iz * stride + ix)
+          low = Math.min(low, y)
+          high = Math.max(high, y)
+        }
+      }
+      const radius = Math.hypot(tileSize / 2 + .55, tileSize / 2 + .55, (high - low) / 2 + 1.1)
+      if (!tileInCameraCoverage(coverage, centerX, (low + high) / 2, centerZ, radius, detailed ? (compact ? 36 : 46) : Infinity)) {
+        // Advance the same six random values per blade: retained tiles stay byte-identical.
+        for (let i = 0; i < count * 6; i++) random()
+        yield null
+        continue
+      }
+    }
     let order = placementOrders.get(cells)
     if (!order) {
       const shuffle = meadowRandom(cells)

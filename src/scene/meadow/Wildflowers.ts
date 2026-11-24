@@ -6,6 +6,7 @@ const SPECIES = [
   { petal: '#77539c', tip: '#b796cf', center: '#80709a' },
   { petal: '#a65580', tip: '#e9a7bf', center: '#c7a166' },
   { petal: '#afa1c2', tip: '#f2e4e6', center: '#d7b16c' },
+  { petal: '#e0e6d9', tip: '#fffbed', center: '#ebbf43' },
 ]
 
 function petal(length: number, halfWidth: number, lift: number, cup: number) {
@@ -74,16 +75,16 @@ function flowerGeometry(species: number) {
         .rotateY(angle).translate(bend * (y / stemHeight) ** 2, y, 0)
     }
   } else {
-    const lobes = species === 1 ? 5 : 7
+    const lobes = species === 3 ? 11 : species === 1 ? 5 : 7
     const tilt = species === 1 ? .29 : -.22
     for (let i = 0; i < lobes; i++) {
       const angle = i * Math.PI * 2 / lobes + Math.sin(i * 1.7) * .075
       const length = .137 + Math.sin(i * 2.43 + species) * .019
-      add(petal(length, species === 1 ? .067 : .044, .015 + Math.cos(i * 1.8) * .022, .024),
+      add(petal(length, species === 3 ? .022 : species === 1 ? .067 : .044, .015 + Math.cos(i * 1.8) * .022, species === 3 ? .009 : .024),
         colors.petal, colors.tip, 2).translate(0, .004, .031).rotateY(angle)
         .rotateX(tilt).rotateZ(.16).translate(bend, stemHeight, 0)
     }
-    add(new THREE.SphereGeometry(1, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2), '#9a714a', colors.center)
+    add(new THREE.SphereGeometry(1, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2), species === 3 ? '#a77b23' : '#9a714a', colors.center)
       .scale(.055, .027, .055).rotateX(tilt).rotateZ(.16).translate(bend, stemHeight + .009, 0)
   }
   const geometry = mergeGeometries(parts)
@@ -106,7 +107,7 @@ export function wildflowers(compact: boolean) {
       const z = drift.z + u * drift.sin + v * drift.cos
       if (random() > flowerDrift(drift, x, z)) continue
       const variety = random()
-      const species = variety < .8 ? drift.species : (drift.species + (variety < .91 ? 1 : 2)) % SPECIES.length
+      const species = variety < .8 ? drift.species : (drift.species + (variety < .91 ? 1 : 2)) % 3
       const size = .55 + random() * .6
       const y = terrainHeight(x, z)
       const stature = 1 - .27 * hillTurf(y, 1)
@@ -117,11 +118,25 @@ export function wildflowers(compact: boolean) {
       poses[species].push(pose.matrix.clone())
     }
   }
+  // Small, separate groups leave the established grass colours and flower drifts intact.
+  const daisies = meadowRandom(612193)
+  for (const [cx, cz, width, depth] of [[-5.9, 7.2, 1.7, 1], [6.2, 4.2, 1.5, .8], [-3.3, 14.3, 2.1, 1.2], [9.5, 11, 1.8, 1]]) {
+    for (let i = 0; i < (compact ? 18 : 27); i++) {
+      const angle = daisies() * Math.PI * 2, radius = Math.sqrt(daisies())
+      const x = cx + Math.cos(angle) * radius * width, z = cz + Math.sin(angle) * radius * depth
+      const size = .62 + daisies() * .4
+      pose.position.set(x, terrainHeight(x, z) - .026, z)
+      pose.rotation.set((daisies() - .5) * .35, daisies() * Math.PI * 2, (daisies() - .5) * .35)
+      pose.scale.set(size, size * (.9 + daisies() * .15), size)
+      pose.updateMatrix()
+      poses[3].push(pose.matrix.clone())
+    }
+  }
   const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })
   const shade = new THREE.Color()
   for (let species = 0; species < SPECIES.length; species++) {
     const flowers = new THREE.InstancedMesh(flowerGeometry(species), material, poses[species].length)
-    flowers.name = ['lavender-spires', 'pink-blossoms', 'pale-blossoms'][species]
+    flowers.name = ['lavender-spires', 'pink-blossoms', 'pale-blossoms', 'white-daisies'][species]
     poses[species].forEach((matrix, index) => {
       flowers.setMatrixAt(index, matrix)
       shade.setScalar(.82 + random() * .28)
