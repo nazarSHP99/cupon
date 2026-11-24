@@ -5,7 +5,7 @@
   left: 50%;
   translate: -50% 0;
   width: min(389px, calc(100% - 28px));
-  height: 60px;
+  height: 64px;
   overflow: clip;
   mask-image: linear-gradient(to right, transparent, #000 17%, #000 83%, transparent);
   color: #fffcf4;
@@ -52,10 +52,10 @@
 .journey-nav__stop:hover .journey-nav__tick { color: #fff; opacity: 1; }
 .journey-nav__label {
   position: absolute;
-  top: calc(100% + 7px);
+  top: calc(100% + 8px);
   left: 50%;
   translate: -50% 0;
-  font: 700 12px/1.1 monospace;
+  font: 700 14px/1.1 monospace;
   letter-spacing: .045em;
   white-space: nowrap;
 }

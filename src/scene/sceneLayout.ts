@@ -63,8 +63,6 @@ export function getSceneLayout(width: number, height: number) {
   const keypadBounds = new THREE.Box3(new THREE.Vector3(-1.415, -.86, -.22), new THREE.Vector3(1.415, .86, .355))
     .applyMatrix4(keypadMatrix)
   fit([-1.415, -.86, -.22], [1.415, .86, .355], keypadMatrix)
-  const instructionHalfDepth = instructionScale *
-    (INSTRUCTION_DEPTH * Math.cos(instructionAngle) + INSTRUCTION_WIDTH * Math.sin(instructionAngle)) / 2
   fit([-INSTRUCTION_WIDTH / 2, 0, -INSTRUCTION_DEPTH / 2], [INSTRUCTION_WIDTH / 2, .12, INSTRUCTION_DEPTH / 2],
     new THREE.Matrix4().compose(instructionPosition, new THREE.Quaternion().setFromAxisAngle(up, instructionAngle), new THREE.Vector3().setScalar(instructionScale)))
   const farDistance = Math.max(34, Math.min(70, 30 / aspect))
@@ -90,7 +88,7 @@ export function getSceneLayout(width: number, height: number) {
   const keypadDistance = Math.max(2.83 * keypadScale / (2 * halfHeight * aspect * .86), 1.72 * keypadScale / (2 * halfHeight * .70))
   return {
     compact, portrait, machineX, machinePosition, stackPosition, stackScale, printerPosition, printerScale, keypadPosition, keypadScale,
-    keypadBounds, dragPlaneZ: Math.max(keypadBounds.max.z, stackPosition.z + stackHalfDepth, instructionPosition.z + instructionHalfDepth) + 1,
+    keypadBounds,
     rackControlsWidth: compact ? Math.min(216, width - 64) * (2 * halfHeight * browseDistance) / (height * stackScale) : 1.15,
     rackControlsDepth: compact ? 40 * (2 * halfHeight * browseDistance) / (height * browseAxis.y * stackScale) : .28,
     keypadTarget, keypadCamera: keypadTarget.clone().add(new THREE.Vector3(0, .882, .471).multiplyScalar(keypadDistance)),

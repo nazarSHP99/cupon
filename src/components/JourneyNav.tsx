@@ -38,7 +38,8 @@ export function JourneyNav({ progress, onNavigate, disabled = false }: JourneyNa
           disabled={disabled}
           onClick={() => onNavigate(checkpoint)}>
           <span className="journey-nav__tick" aria-hidden="true" />
-          <span className="journey-nav__label" aria-hidden="true" style={{ opacity: labelOpacity }}>{checkpoints[checkpoint]}</span>
+          {checkpoint === active && labelOpacity > 0 &&
+            <span className="journey-nav__label" aria-hidden="true" style={{ opacity: labelOpacity }}>{checkpoints[checkpoint]}</span>}
         </button>
       })}
     </div>
