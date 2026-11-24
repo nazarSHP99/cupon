@@ -4,8 +4,9 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { DEMO_COUPONS, type Coupon } from '../coupons/coupon'
 import { PRINT_DURATION, type Receipt } from '../coupons/receipt'
 import { getSceneLayout, grassCameraCoverage, KEYPAD_TILT, sceneCamera } from './sceneLayout'
-import { COUPON_BOX_DEPTH, CouponBox } from './terminal/CouponBox'
+import { COUPON_BOX_DEPTH, COUPON_BOX_WIDTH, CouponBox } from './terminal/CouponBox'
 import { couponPaper } from './terminal/couponPaper'
+import { couponDimensions, couponLeadingEdge, couponPositionFromEdge, READY_EDGE, REST_TILT, SLOT_EDGE } from './terminal/couponInteraction'
 import { UsedCouponDrawer } from './terminal/UsedCouponDrawer'
 import type { UsedCoupon } from '../hooks/useCouponHistory'
 import { ReceiptPrinter } from './terminal/ReceiptPrinter'
@@ -48,9 +49,6 @@ interface SceneProps {
   disabled: boolean
 }
 
-const rest = new THREE.Vector3(0, -.3, 1.08)
-const insertionApproach = new THREE.Vector3(0, .105, rest.z)
-const insertion = new THREE.Vector3(0, 0.105, 2.08)
 const ease = (t: number) => t * t * (3 - 2 * t)
 const KEYPAD_WIDTH = 360
 const KEYPAD_HEIGHT = 226
@@ -170,20 +168,32 @@ class TerminalScene {
   private previous = 0
   private clock = 0
   private insertStarted = 0
-  private startPosition = rest.clone()
+  private startEdge = new THREE.Vector3()
   private startRotation = new THREE.Euler()
+  private restPosition = new THREE.Vector3()
+  private paperWidth = 2.28
+  private paperHeight = 2.28 / 1.75
+  private paperBounds = new THREE.Box3()
+  private paperTransform = new THREE.Matrix4()
+  private paperQuaternion = new THREE.Quaternion()
+  private paperScale = new THREE.Vector3(1, 1, 1)
+  private paperWorldPosition = new THREE.Vector3()
+  private paperObstacles: THREE.Box3[] = []
   private dragging = false
   private dragPointer: number | null = null
   private suppressDragClickUntil = 0
   private over = false
   private pointer = new THREE.Vector2()
   private raycaster = new THREE.Raycaster()
-  private dragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -rest.z)
+  private dragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -SLOT_EDGE.z)
   private hit = new THREE.Vector3()
   private grabOffset = new THREE.Vector3()
   private slotEdge = new THREE.Vector3()
-  private dragPosition = rest.clone()
-  private target = rest.clone()
+  private dragEdge = new THREE.Vector3()
+  private guidedEdge = new THREE.Vector3()
+  private dragStart = new THREE.Vector2()
+  private dragMoved = false
+  private target = new THREE.Vector3()
   private destroyed = false
 
   constructor(private host: HTMLDivElement, props: SceneProps) {
@@ -461,7 +471,7 @@ class TerminalScene {
     const preserveJourney = this.layout !== null
     if (preserveJourney && (this.dragging || this.touch)) {
       this.cancelPointerOnBlur()
-      if (this.card && this.props.phase === 'ready') this.card.position.copy(rest)
+      if (this.card && this.props.phase === 'ready') this.card.position.copy(this.restPosition)
     }
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.4, Math.sqrt(2_250_000 / (width * height))))
     this.renderer.setSize(width, height)
@@ -469,7 +479,12 @@ class TerminalScene {
     const layout = this.layout = getSceneLayout(width, height)
     this.meadow.ensureViewport(width, height, () => this.destroyed, layout.compact)
     this.machine.position.copy(layout.machinePosition)
-    this.dragPlane.constant = -(layout.machinePosition.z + rest.z)
+    this.paperObstacles = [layout.keypadBounds.clone(),
+      new THREE.Box3(new THREE.Vector3(-COUPON_BOX_WIDTH / 2, 0, -COUPON_BOX_DEPTH / 2),
+        new THREE.Vector3(COUPON_BOX_WIDTH / 2, 1.57, COUPON_BOX_DEPTH / 2))
+        .applyMatrix4(new THREE.Matrix4().makeScale(layout.stackScale, layout.stackScale, layout.stackScale)).translate(layout.stackPosition),
+      new THREE.Box3(new THREE.Vector3(-1.18, 0, -.83), new THREE.Vector3(1.18, 1.06, .83))
+        .applyMatrix4(new THREE.Matrix4().makeScale(layout.printerScale, layout.printerScale, layout.printerScale)).translate(layout.printerPosition)]
     this.stack.position.copy(layout.stackPosition)
     this.stack.scale.setScalar(layout.stackScale)
     this.stack.setPortrait(layout.portrait)
@@ -532,9 +547,13 @@ class TerminalScene {
       this.card = null
     }
     if (!coupon) return
+    const { width, height } = couponDimensions(coupon.aspect)
+    this.paperWidth = width
+    this.paperHeight = height
     const card = couponPaper(coupon, 2.28, 1.6, () => { this.shadowDirty = true })
-    card.position.copy(rest)
-    card.rotation.set(-.04, 0, -.03)
+    card.rotation.set(REST_TILT, 0, 0)
+    couponPositionFromEdge(height, READY_EDGE, card.rotation, this.restPosition)
+    card.position.copy(this.restPosition)
     this.card = card
     this.machine.add(card)
   }
@@ -548,8 +567,8 @@ class TerminalScene {
       this.display.setPhase(props.phase, this.clock)
       if (props.phase === 'inserting' && this.card) {
         this.insertStarted = performance.now()
-        this.startPosition.copy(this.card.position)
         this.startRotation.copy(this.card.rotation)
+        couponLeadingEdge(this.paperHeight, this.card.position, this.card.rotation, this.startEdge)
         this.dragging = false
       }
       if (props.phase === 'printing') this.printStarted = performance.now()
@@ -644,8 +663,9 @@ class TerminalScene {
       } else if (object) this.props.onBrowse()
       return
     }
-    // Keep the coupon at the receiver's depth so picking it up preserves its apparent size.
-    this.dragPlane.constant = -(this.machine.position.z + this.card.position.z)
+    // Follow the leading edge at the receiver's depth, preserving the picked-up size.
+    couponLeadingEdge(this.paperHeight, this.card.position, this.card.rotation, this.guidedEdge)
+    this.dragPlane.constant = -(this.machine.position.z + this.guidedEdge.z)
     if (!this.raycaster.ray.intersectPlane(this.dragPlane, this.hit)) return
     this.machine.worldToLocal(this.hit)
     event.preventDefault()
@@ -653,8 +673,10 @@ class TerminalScene {
     this.dragPointer = event.pointerId
     this.renderer.domElement.dataset.cursor = 'grabbing'
     this.over = false
-    this.grabOffset.copy(this.hit).sub(this.card.position)
-    this.dragPosition.copy(this.card.position)
+    this.grabOffset.copy(this.hit).sub(this.guidedEdge)
+    this.dragEdge.copy(this.guidedEdge)
+    this.dragStart.set(event.clientX, event.clientY)
+    this.dragMoved = false
     this.renderer.domElement.setPointerCapture(event.pointerId)
     this.props.onDragHint('dragging')
   }
@@ -712,17 +734,20 @@ class TerminalScene {
     }
     if (!this.raycaster.ray.intersectPlane(this.dragPlane, this.hit)) return
     this.machine.worldToLocal(this.hit)
-    this.dragPosition.copy(this.hit).sub(this.grabOffset)
-    this.dragPosition.x = THREE.MathUtils.clamp(this.dragPosition.x, -2.8, 2.8)
-    this.dragPosition.y = THREE.MathUtils.clamp(this.dragPosition.y, -1, 2.6)
-    const center = this.machine.localToWorld(this.hit.copy(this.dragPosition)).project(this.camera)
+    this.dragEdge.copy(this.hit).sub(this.grabOffset)
+    this.dragEdge.x = THREE.MathUtils.clamp(this.dragEdge.x, -2.8, 2.8)
+    this.dragEdge.y = THREE.MathUtils.clamp(this.dragEdge.y, -2.1 + this.paperHeight, 2.6)
+    this.dragMoved ||= Math.hypot(event.clientX - this.dragStart.x, event.clientY - this.dragStart.y) > 6
+    const center = this.machine.localToWorld(this.hit.copy(this.dragEdge)).project(this.camera)
     const slot = this.machine.localToWorld(this.target.set(0, .105, .905)).project(this.camera)
     const dx = Math.abs(center.x - slot.x) * this.viewport.elements[0]
     const dy = Math.abs(center.y - slot.y) * -this.viewport.elements[5]
     const slotEdge = this.machine.localToWorld(this.slotEdge.set(1.225, .105, .905)).project(this.camera)
     const slotWidth = Math.abs(slotEdge.x - slot.x) * this.viewport.elements[0] * 2
-    this.over = dx < Math.max(28, slotWidth * .31) && dy < Math.max(14, slotWidth * .12)
-      && Math.abs(this.dragPosition.y - .105) < .25
+    const margin = this.over ? 1.25 : 1
+    this.over = this.dragMoved && dx < Math.max(32, slotWidth * .4) * margin
+      && dy < Math.max(24, slotWidth * .22) * margin
+      && Math.abs(this.dragEdge.y - SLOT_EDGE.y) < .36 * margin
     this.props.onDragHint(this.over ? 'over' : 'dragging')
   }
 
@@ -732,6 +757,18 @@ class TerminalScene {
     const obstruction = this.raycaster.intersectObject(this.printer, true)[0]
     if (obstruction && obstruction.distance < hit.distance) return null
     return this.stack
+  }
+
+  private keepCouponClear() {
+    const card = this.card!
+    this.paperQuaternion.setFromEuler(card.rotation)
+    for (const obstacle of this.paperObstacles) {
+      this.paperTransform.compose(this.paperWorldPosition.copy(card.position).add(this.machine.position), this.paperQuaternion, this.paperScale)
+      this.paperBounds.min.set(-this.paperWidth / 2, -this.paperHeight / 2, -.013)
+      this.paperBounds.max.set(this.paperWidth / 2, this.paperHeight / 2, .014)
+      this.paperBounds.applyMatrix4(this.paperTransform)
+      if (this.paperBounds.intersectsBox(obstacle)) card.position.y += obstacle.max.y - this.paperBounds.min.y + .025
+    }
   }
 
   private leave = () => {
@@ -832,29 +869,35 @@ class TerminalScene {
       if (card.visible && (this.near || this.props.phase === 'inserting')) this.shadowDirty = true
       if (this.props.phase === 'inserting') {
         const progress = Math.min(1, Math.max(0, timestamp - this.insertStarted) / (this.props.reducedMotion ? 350 : 1950))
-        if (progress < .16) {
-          const t = ease(progress / .16)
-          card.position.lerpVectors(this.startPosition, insertionApproach, t)
-          card.rotation.set(THREE.MathUtils.lerp(this.startRotation.x, -.04, t), THREE.MathUtils.lerp(this.startRotation.y, 0, t), THREE.MathUtils.lerp(this.startRotation.z, 0, t))
-        } else if (progress < .43) {
-          const t = ease((progress - .16) / .27)
-          card.position.lerpVectors(insertionApproach, insertion, t)
-          card.rotation.set(THREE.MathUtils.lerp(-.04, -Math.PI / 2, t), 0, 0)
+        if (progress < .43) {
+          const t = ease(progress / .43)
+          this.target.lerpVectors(this.startEdge, SLOT_EDGE, t)
+          card.rotation.set(THREE.MathUtils.lerp(this.startRotation.x, -Math.PI / 2, t), THREE.MathUtils.lerp(this.startRotation.y, 0, t), THREE.MathUtils.lerp(this.startRotation.z, 0, t))
+          couponPositionFromEdge(this.paperHeight, this.target, card.rotation, card.position)
+          this.keepCouponClear()
         } else {
-          card.position.set(0, 0.105, THREE.MathUtils.lerp(insertion.z, -0.8, ease((progress - 0.43) / 0.57)))
+          card.position.set(0, SLOT_EDGE.y, THREE.MathUtils.lerp(SLOT_EDGE.z + this.paperHeight / 2, -.8, ease((progress - .43) / .57)))
           card.rotation.set(-Math.PI / 2, 0, 0)
         }
         card.visible = progress < 0.98
       } else if (this.dragging) {
-        card.position.copy(this.dragPosition)
-        card.rotation.x = THREE.MathUtils.damp(card.rotation.x, -.04, 10, delta)
-        card.rotation.z = THREE.MathUtils.damp(card.rotation.z, this.over ? 0 : -.03, 10, delta)
+        const proximity = this.dragMoved ? ease(THREE.MathUtils.clamp(1 - Math.max(Math.abs(this.dragEdge.x) / 1.6, Math.abs(this.dragEdge.y - SLOT_EDGE.y) / .85), 0, 1)) : 0
+        const angle = THREE.MathUtils.lerp(REST_TILT, -.98, this.over ? 1 : proximity)
+        this.target.copy(this.over ? SLOT_EDGE : this.dragEdge)
+        this.guidedEdge.lerp(this.target, this.props.reducedMotion ? 1 : 1 - Math.exp(-18 * delta))
+        card.rotation.x = approach(card.rotation.x, angle, 12)
+        card.rotation.z = approach(card.rotation.z, 0, 12)
+        couponPositionFromEdge(this.paperHeight, this.guidedEdge, card.rotation, card.position)
+        this.keepCouponClear()
       } else {
-        this.target.copy(rest)
+        couponLeadingEdge(this.paperHeight, card.position, card.rotation, this.guidedEdge)
+        this.target.copy(READY_EDGE)
         if (!this.props.reducedMotion) this.target.y += Math.sin(this.clock * 1.6) * .03
-        card.position.lerp(this.target, this.props.reducedMotion ? 1 : 1 - Math.exp(-9 * delta))
-        card.rotation.x = THREE.MathUtils.damp(card.rotation.x, -.04, 8, delta)
-        card.rotation.z = THREE.MathUtils.damp(card.rotation.z, -.03, 8, delta)
+        this.guidedEdge.lerp(this.target, this.props.reducedMotion ? 1 : 1 - Math.exp(-9 * delta))
+        card.rotation.x = THREE.MathUtils.damp(card.rotation.x, REST_TILT, 8, delta)
+        card.rotation.z = THREE.MathUtils.damp(card.rotation.z, 0, 8, delta)
+        couponPositionFromEdge(this.paperHeight, this.guidedEdge, card.rotation, card.position)
+        if (this.props.phase === 'ready') this.keepCouponClear()
       }
     }
     if (this.shadowDirty) {
