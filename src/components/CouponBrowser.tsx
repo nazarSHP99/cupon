@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { DEMO_COUPONS, downloadCoupon } from '../coupons/coupon'
 import { Icon } from './Icons'
+import { trackCouponEvent } from '../analytics/analytics'
 import './experience.css'
 
 interface CouponBrowserProps {
@@ -36,7 +37,10 @@ export function CouponBrowser({ fallback, rackControls, activeIndex, onActiveInd
   async function saveCoupon() {
     setDownloadError('')
     setDownloading(true)
-    try { await downloadCoupon(coupon) }
+    try {
+      await downloadCoupon(coupon)
+      trackCouponEvent('coupon_download', coupon)
+    }
     catch (cause) { setDownloadError(cause instanceof Error ? cause.message : 'Не вдалося завантажити купон.') }
     finally { setDownloading(false) }
   }

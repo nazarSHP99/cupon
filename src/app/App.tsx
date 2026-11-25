@@ -11,6 +11,7 @@ import { CustomCursor } from '../components/CustomCursor'
 import { InstructionReader } from '../components/InstructionReader'
 import '../components/experience.css'
 import type { DragHint, Phase } from '../scene/MachineScene'
+import { trackCouponEvent, trackEvent } from '../analytics/analytics'
 
 const MachineScene = lazy(() => import('../scene/MachineScene'))
 
@@ -109,6 +110,7 @@ export default function App() {
       setReceipt(printed)
       phaseRef.current = 'printing'
       setPhase('printing')
+      trackCouponEvent('coupon_activate', coupon)
       playRef.current('print')
     }).catch(cause => {
       if (cancelled) return
@@ -153,6 +155,7 @@ export default function App() {
       setSaveError('')
       phaseRef.current = 'ready'
       setPhase('ready')
+      trackCouponEvent('coupon_select', selected)
     } catch (cause) {
       if (id === request.current) setError(cause instanceof Error ? cause.message : 'Не вдалося відкрити купон. Спробуй ще раз.')
     } finally {
@@ -165,12 +168,14 @@ export default function App() {
     request.current++
     setBrowserOpen(false)
     setActiveCoupon(index)
-    setCoupon(DEMO_COUPONS[index] ?? DEMO_COUPONS[0])
+    const selected = DEMO_COUPONS[index] ?? DEMO_COUPONS[0]
+    setCoupon(selected)
     setReceipt(null)
     setSaveError('')
     phaseRef.current = 'ready'
     setPhase('ready')
     setError('')
+    trackCouponEvent('coupon_select', selected)
   }
 
   function reset() {
@@ -191,7 +196,10 @@ export default function App() {
     if (!receipt || saving) return
     setSaving(true)
     setSaveError('')
-    try { await downloadReceipt(receipt) }
+    try {
+      await downloadReceipt(receipt)
+      trackCouponEvent('receipt_download', receipt.coupon)
+    }
     catch (cause) { setSaveError(cause instanceof Error ? cause.message : 'Не вдалося зберегти чек. Спробуй ще раз.') }
     finally { setSaving(false) }
   }
@@ -229,9 +237,10 @@ export default function App() {
   }
 
   function openLibrary() {
-    if (locked || instructionOpen) return
+    if (locked || instructionOpen || browserOpen) return
     setActiveCoupon(0)
     setBrowserOpen(true)
+    trackEvent('coupon_library_open')
   }
 
   function closeLibrary() {
